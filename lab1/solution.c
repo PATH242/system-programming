@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "libcoro.h"
+#include <time.h>
 
 /**
 The most practical sorting algorithm is a hybrid of algorithms; 
@@ -15,12 +16,14 @@ struct my_context {
     int* numsVector;
     int* size;
     int* capacity;
+    struct timespec start_time;
+    struct timespec end_time;
+    long long int total_work_time_nsec;
+    int context_switch_count;
 
 };
 
-int* ReadNumsFromFile(char* name, int* numsVector, int* size, int* capacity){
-    char filename[11];
-    sprintf(filename, "test%c.txt", name[5]);
+int* ReadNumsFromFile(char* filename, int* numsVector, int* size, int* capacity){
     *capacity = 2;
     *size = 0;
     numsVector = (int *)malloc( (*capacity) * sizeof(int));
@@ -58,6 +61,7 @@ my_context_new(const char *name)
     ctx->capacity = (int*)malloc(sizeof(int));
     ctx->numsVector = 
         ReadNumsFromFile(ctx->name, ctx->numsVector, ctx->size, ctx->capacity);
+    ctx->context_switch_count = 0;
 	return ctx;
 }
 
@@ -65,10 +69,7 @@ static void
 my_context_delete(struct my_context *ctx)
 {
 	free(ctx->name);
-    // free(ctx->numsVector);
-    // free(ctx->size);
     free(ctx->capacity);
-	// free(ctx);
 }
 
 // Utility functions for sorting 
@@ -139,18 +140,31 @@ int QuickSortHelper(int *numsVector, int s, int e)
     return (i + 1);
 }
 
-void QuickSort(int *numsVector, int s, int e, struct coro* this, char* name)
+// Functionality: Sorts a list of numbers.
+// Returns: time wasted during yield to be subtracted from total time of running of this function.
+long long int QuickSort(int *numsVector, int s, int e, struct coro* this, char* name, struct my_context *ctx)
 {
     if (e <= s)
     {
-        return;
+        return 0;
     }
     int pivot = QuickSortHelper(numsVector, s, e);
-    printf("%s: switch count %lld\n", name, coro_switch_count(this));
-	printf("%s: yield\n", name);
-	coro_yield();
-    QuickSort(numsVector, s, pivot - 1, this, name);
-    QuickSort(numsVector, pivot + 1, e, this, name);
+
+    struct timespec start_time, end_time;
+    clock_gettime(CLOCK_MONOTONIC, &start_time);
+    long long int yield_start_time = start_time.tv_sec * 1000000000 + start_time.tv_nsec;
+    
+    ctx->context_switch_count += coro_switch_count(this);
+    coro_yield();
+
+    clock_gettime(CLOCK_MONOTONIC, &end_time);
+    
+    long long int yield_end_time = end_time.tv_sec * 1000000000 + end_time.tv_nsec;
+    long long int yield_total_time = yield_end_time - yield_start_time;
+
+    yield_total_time += QuickSort(numsVector, s, pivot - 1, this, name, ctx);
+    yield_total_time += QuickSort(numsVector, pivot + 1, e, this, name, ctx);
+    return yield_total_time;
 }
 
 /**
@@ -167,9 +181,16 @@ coroutine_func_f(void *context)
 	struct my_context *ctx = context;
 	char *name = ctx->name;
 	printf("Started coroutine %s\n", name);
+    
+    clock_gettime(CLOCK_MONOTONIC, &ctx->start_time);     
+    long long int yield_time = QuickSort(ctx->numsVector, 0, (*ctx->size) - 1, this, name, ctx);
+    clock_gettime(CLOCK_MONOTONIC, &ctx->end_time); 
 
-	printf("%s: switch count %lld\n", name, coro_switch_count(this));
-    QuickSort(ctx->numsVector, 0, (*ctx->size) - 1, this, name);
+    long long int work_time_nsec = (ctx->end_time.tv_sec - ctx->start_time.tv_sec) * 1000000000 +
+                            (ctx->end_time.tv_nsec - ctx->start_time.tv_nsec) - yield_time;
+    
+    __sync_add_and_fetch(&ctx->total_work_time_nsec, work_time_nsec);
+
 	printf("%s: switch count after other function %lld\n", name,
 	       coro_switch_count(this));
 
@@ -201,7 +222,6 @@ void merge(int* arr1, int* arr2, int size1, int size2, int* result){
 
 int *MergeSortedArrays(struct my_context **contexts, int size)
 {
-    printf("%d\n", size);
     if (size == 1)
     {
         return contexts[0]->numsVector;
@@ -234,16 +254,18 @@ int *MergeSortedArrays(struct my_context **contexts, int size)
     MergeSortedArrays(new_contexts, (size / 2 + (size % 2)));
 }
 
+// The following code assumes valid input only.
+// EX: ./a.out test1.txt test2.txt test3.txt test4.txt
 int main(int argc, char **argv)
 {
 	coro_sched_init();
-    struct my_context** contexts = malloc(6 * sizeof(struct my_context*));
+    struct my_context** contexts = malloc( (argc - 1) * sizeof(struct my_context*));
     int lst = 0;
 	/* Start several coroutines. */
     /* Each file should be sorted in its own coroutine*/
-	for (int i = 1; i < 7; ++i) {
+	for (int i = 1; i < argc; ++i) {
 		char name[16];
-		sprintf(name, "coro_%d", i);
+		sprintf(name, argv[i]);
         contexts[lst++] = my_context_new(name);
         coro_new(coroutine_func_f, contexts[lst-1]);
 	}
@@ -258,12 +280,27 @@ int main(int argc, char **argv)
 	/* MERGING OF THE SORTED ARRAYS */
 
     int size = 0;
-    for(int i = 0; i < 6; i ++){
+    for(int i = 0; i < argc - 1; i ++){
         size += *contexts[i]->size;
     }
     printf("%d numbers have been sorted\n", size);
     int* resultVector = (int*) malloc(size * sizeof(int));
-    resultVector = MergeSortedArrays(contexts, 6);
+    resultVector = MergeSortedArrays(contexts, (argc - 1));
+
+    long long int total_work_time_nsec = 0;
+    long long int total_context_switches = 0;
+
+    for (int i = 0; i < argc - 1; i++) {
+        total_work_time_nsec += contexts[i]->total_work_time_nsec;
+        total_context_switches += contexts[i]->context_switch_count;
+    }
+
+    // Rest of my_context_delete
+    for(int i = 0; i < argc - 1; i ++){
+        free(contexts[i]->size);
+        free(contexts[i]->numsVector);
+	    free(contexts[i]);
+    }
 
     FILE * output_file = fopen("result.txt", "w");
     if (output_file == NULL) {
@@ -282,5 +319,9 @@ int main(int argc, char **argv)
     }
 
     fclose(output_file);
+
+    printf("Total Work Time (ns): %lld\n", total_work_time_nsec);
+    printf("Context Switches: %lld\n", total_context_switches);
+
 	return 0;
 }
