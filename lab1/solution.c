@@ -71,6 +71,14 @@ my_context_delete(struct my_context *ctx)
     free(ctx->capacity);
 }
 
+static void
+my_context_rest_delete(struct my_context *ctx)
+{
+    free(ctx->size);
+    free(ctx->numsVector);
+    free(ctx);
+}
+
 // Utility functions for sorting 
 
 void swap(int *a, int *b)
@@ -162,7 +170,6 @@ long long int QuickSort(int *numsVector, int s, int e, struct coro* this, char* 
 
     yield_total_time += QuickSort(numsVector, s, pivot - 1, this, name, ctx);
     yield_total_time += QuickSort(numsVector, pivot + 1, e, this, name, ctx);
-    ctx->context_switch_count += coro_switch_count(this);
     return yield_total_time;
 }
 
@@ -189,7 +196,7 @@ coroutine_func_f(void *context)
                             (ctx->end_time.tv_nsec - ctx->start_time.tv_nsec) - yield_time;
     
     ctx->total_work_time_nsec = work_time_nsec;
-
+    ctx->context_switch_count += coro_switch_count(this);
 	printf("%s: switch count after other function %lld\n", name,
 	       coro_switch_count(this));
     printf("The total time for this couroutine is %lldns\n", ctx->total_work_time_nsec);
@@ -226,7 +233,7 @@ int *MergeSortedArrays(struct my_context **contexts, int size)
         return contexts[0]->numsVector;
     }
     struct my_context **new_contexts = malloc((size / 2 + 1) * sizeof(struct my_context *));
-
+    int total_size = 0;
     for (int i = 0; i < size - 1; i += 2)
     {
         int *new_size = malloc(sizeof(int));
@@ -245,12 +252,19 @@ int *MergeSortedArrays(struct my_context **contexts, int size)
         new_context->numsVector = resultVector;
         new_context->size = new_size;
         new_contexts[i/2 + (i%2)] = new_context;
+        total_size += *new_size;
+        //free(resultVector);
+        //free(new_size);
     }
     if ((size % 2))
     {
         new_contexts[size / 2] = contexts[size - 1];
+        total_size += *contexts[size-1]->size;
     }
-    return MergeSortedArrays(new_contexts, (size / 2 + (size % 2)));
+    int* ret = (int*)malloc(total_size * sizeof(int));
+    ret = MergeSortedArrays(new_contexts, (size / 2 + (size % 2)));
+    free(new_contexts);
+    return ret;
 }
 
 // The following code assumes valid input only.
@@ -284,9 +298,9 @@ int main(int argc, char **argv)
     for(int i = 0; i < argc - 1; i ++){
         size += *contexts[i]->size;
     }
-    printf("%d numbers have been sorted\n", size);
     int* resultVector = (int*) malloc(size * sizeof(int));
     resultVector = MergeSortedArrays(contexts, (argc - 1));
+    printf("%d numbers have been sorted\n", size);
 
     long long int total_work_time_nsec = 0;
     long long int total_context_switches = 0;
@@ -294,13 +308,6 @@ int main(int argc, char **argv)
     for (int i = 0; i < argc - 1; i++) {
         total_work_time_nsec += contexts[i]->total_work_time_nsec;
         total_context_switches += contexts[i]->context_switch_count;
-    }
-
-    // Rest of my_context_delete
-    for(int i = 0; i < argc - 1; i ++){
-        free(contexts[i]->size);
-        free(contexts[i]->numsVector);
-	    free(contexts[i]);
     }
 
     FILE * output_file = fopen("result.txt", "w");
@@ -319,7 +326,14 @@ int main(int argc, char **argv)
         }
     }
 
+    // Rest of my_context_delete
+    for(int i = 0; i < argc - 1; i ++){
+        my_context_rest_delete(contexts[i]);
+    }
+
+    free(contexts);
     fclose(output_file);
+    free(resultVector);
     clock_gettime(CLOCK_MONOTONIC, &main_end_time);
     long long int work_time_nsec =
                        (main_end_time.tv_sec - main_start_time.tv_sec) * 1000000000 
