@@ -66,17 +66,32 @@ my_context_new(const char *name)
 
 static void
 my_context_delete(struct my_context *ctx)
-{
-	free(ctx->name);
-    free(ctx->capacity);
+{   
+    if(ctx->name)
+    {
+	    free(ctx->name);
+    }
+    if(ctx->capacity)
+    {
+        free(ctx->capacity);
+    }
 }
 
 static void
 my_context_rest_delete(struct my_context *ctx)
 {
-    free(ctx->size);
-    free(ctx->numsVector);
-    free(ctx);
+    if(ctx->size)
+    {
+        free(ctx->size);
+    }
+    if(ctx->numsVector)
+    {
+        free(ctx->numsVector);
+    }
+    if(ctx)
+    {
+        free(ctx);
+    }
 }
 
 // Utility functions for sorting 
@@ -181,7 +196,6 @@ long long int QuickSort(int *numsVector, int s, int e, struct coro* this, char* 
 static int
 coroutine_func_f(void *context)
 {
-	/* IMPLEMENT SORTING OF wqsa FILES HERE. */
 
 	struct coro *this = coro_this();
 	struct my_context *ctx = context;
@@ -226,45 +240,57 @@ void merge(int* arr1, int* arr2, int size1, int size2, int* result){
     }
 }
 
-int *MergeSortedArrays(struct my_context **contexts, int size)
+void MergeSortedArrays(struct my_context **contexts, int size, int* result)
 {
-    if (size == 1)
-    {
-        return contexts[0]->numsVector;
-    }
-    struct my_context **new_contexts = malloc((size / 2 + 1) * sizeof(struct my_context *));
+    struct my_context **new_contexts = (struct my_context **) malloc((size / 2 + (size%2)) * sizeof(struct my_context *));
     int total_size = 0;
+    // Merge sort each two consequent arrays.
     for (int i = 0; i < size - 1; i += 2)
     {
-        int *new_size = malloc(sizeof(int));
+        int *new_size = (int *) malloc(sizeof(int));
         *new_size = (*contexts[i]->size) + (*contexts[i + 1]->size);
         int *resultVector = (int *)malloc((*new_size) * sizeof(int));
         if (resultVector == NULL)
         {
             printf("Error: MEMORY ALLOCATION FAILED\n");
-            return NULL;
+            return;
         }
-
         merge(contexts[i]->numsVector, contexts[i + 1]->numsVector, *contexts[i]->size, *contexts[i + 1]->size, resultVector);
 
         struct my_context *new_context = (struct my_context *)malloc(sizeof(struct my_context));
-
         new_context->numsVector = resultVector;
         new_context->size = new_size;
         new_contexts[i/2 + (i%2)] = new_context;
         total_size += *new_size;
-        //free(resultVector);
-        //free(new_size);
+         // Rest of my_context_delete
+        my_context_rest_delete(contexts[i]);
+        my_context_rest_delete(contexts[i+1]);
     }
+    // If there are odd number of arrays, add the last one.
     if ((size % 2))
     {
-        new_contexts[size / 2] = contexts[size - 1];
-        total_size += *contexts[size-1]->size;
+        struct my_context *new_context = (struct my_context *)malloc(sizeof(struct my_context));
+        new_context->size = malloc(sizeof(int));
+        *new_context->size = *contexts[size - 1]->size;
+        
+        new_context->numsVector = (int *)malloc((*new_context->size) * sizeof(int));
+        memcpy(new_context->numsVector, contexts[size - 1]->numsVector, (*contexts[size - 1]->size) * sizeof(int));
+
+        total_size += *new_context->size;
+        new_contexts[size/2] = new_context;
+        my_context_rest_delete(contexts[size -1]);
     }
-    int* ret = (int*)malloc(total_size * sizeof(int));
-    ret = MergeSortedArrays(new_contexts, (size / 2 + (size % 2)));
+    if ((size%2) + size/2 == 1)
+    {
+        memcpy(result, new_contexts[0]->numsVector, total_size * sizeof(int));
+        my_context_rest_delete(new_contexts[0]);
+    }
+    else
+    {
+        MergeSortedArrays(new_contexts, (size / 2 + (size % 2)), result);
+    }
     free(new_contexts);
-    return ret;
+    return;
 }
 
 // The following code assumes valid input only.
@@ -299,7 +325,7 @@ int main(int argc, char **argv)
         size += *contexts[i]->size;
     }
     int* resultVector = (int*) malloc(size * sizeof(int));
-    resultVector = MergeSortedArrays(contexts, (argc - 1));
+    MergeSortedArrays(contexts, (argc - 1), resultVector);
     printf("%d numbers have been sorted\n", size);
 
     long long int total_work_time_nsec = 0;
@@ -324,11 +350,6 @@ int main(int argc, char **argv)
         } else {
             fprintf(output_file, "\n");
         }
-    }
-
-    // Rest of my_context_delete
-    for(int i = 0; i < argc - 1; i ++){
-        my_context_rest_delete(contexts[i]);
     }
 
     free(contexts);
