@@ -20,7 +20,8 @@ static void execute_expression (const struct expr *e)
 	}
 	else
 	if (!strcmp(e->cmd.exe, "cd") && e->cmd.arg_count == 2) {
-		chdir(e->cmd.args[1]);
+		// Unique cd code.
+		exit(6);
 	}
 	else {
 		char* arg = NULL;
@@ -31,9 +32,10 @@ static void execute_expression (const struct expr *e)
 	}
 }
 
-static int execute_list_of_expressions(const struct expr *e) {
+static char* execute_list_of_expressions(const struct expr *e) {
 	int wstatus = -1;
 	int status_code = -1;
+	char* final_directory = NULL;
 	// Get parameters:
 	while (e != NULL)
 	{
@@ -42,7 +44,7 @@ static int execute_list_of_expressions(const struct expr *e) {
 			int pid2 = fork();
 			if (pid2 == -1) {
 				printf("An error occured with the second fork for execution\n");
-				return 1;
+				exit(1);
 			}
 			if(pid2 == 0){
 				execute_expression(e);
@@ -52,9 +54,14 @@ static int execute_list_of_expressions(const struct expr *e) {
 				if(WIFEXITED(wstatus)) {
 					status_code = WEXITSTATUS(wstatus);
 					if (status_code == 5) {
-						// Our unique exit code.
+						// Unique exit code.
 						printf("Exiting terminal\n");
 						exit(5);
+					}
+					else
+					if(status_code == 6) {
+						chdir(e->cmd.args[1]);
+						final_directory = e->cmd.args[1];
 					}
 					else
 					if (status_code != 0) {
@@ -73,10 +80,16 @@ static int execute_list_of_expressions(const struct expr *e) {
 		else if (e->type == EXPR_TYPE_AND)
 		{
 			// Execute next command if last one was sucess
+			if(status_code != 0){
+				break;
+			}
 		}
 		else if (e->type == EXPR_TYPE_OR)
 		{
-			// Execute next command if last one was failure
+			// Execute next command if last one failed
+			if(status_code == 0) {
+				break;
+			}
 		}
 		else
 		{
@@ -84,25 +97,36 @@ static int execute_list_of_expressions(const struct expr *e) {
 		}
 		e = e->next;
 	}
-	exit(0);
+	return final_directory;
 }
 
-static int
+static void
 execute_command_line(const struct command_line *line)
 {
 	assert(line != NULL);
 	// Redirect output path to a file if necessary.
+	int original_stdout;
 	if (line->out_type == OUTPUT_TYPE_FILE_NEW)
 	{
 		int file = open(line->out_file, O_WRONLY | O_CREAT, 0777);
+		original_stdout = dup(STDOUT_FILENO);
 		dup2(file, STDOUT_FILENO);
 		close(file);
 	}
 	else if (line->out_type == OUTPUT_TYPE_FILE_APPEND)
 	{
 		int file = open(line->out_file, O_WRONLY | O_CREAT| O_APPEND, 0777);
+		original_stdout = dup(STDOUT_FILENO);
 		dup2(file, STDOUT_FILENO);
 		close(file);
+	}
+
+	// Create pipe for cd path info 
+	int fd[2];
+	bool fd_open = true;
+	if (pipe(fd) == -1){
+		printf("An error occorued while opening the pipe\n");
+		fd_open = false;
 	}
 
 	// Create child process to execute list of expressions
@@ -110,14 +134,22 @@ execute_command_line(const struct command_line *line)
 	if (pid == -1)
 	{
 		printf("An error occured with fork at command line execution\n");
-		return 1;
+		exit(1);
 	}
 
 	// child process
 	if (pid == 0)
 	{
 		const struct expr *e = line->head;
-		execute_list_of_expressions(e);
+		char* final_directory = execute_list_of_expressions(e);
+		close(fd[0]);
+		if(fd_open){
+			int size = (int)strlen(final_directory);
+			write(fd[1], &size, sizeof(int));
+			write(fd[1], final_directory, size);
+		}
+		close(fd[1]);
+		exit(0);
 	}
 	// Parent process.
 	else
@@ -136,9 +168,26 @@ execute_command_line(const struct command_line *line)
 					exit(0);
 				}
 			}
+			close(fd[1]);
+			char* final_directory = NULL;
+			int size;
+			if(fd_open){
+				if(read(fd[0], &size, sizeof(int))) {
+					final_directory = malloc(size);
+				}
+				if(read(fd[0], final_directory, size)) {
+					chdir(final_directory);
+				}
+			}
+			close(fd[0]);
 		}
 	}
-	return 0;
+	// close the output path to a file if necessary.
+	if (line->out_type != OUTPUT_TYPE_STDOUT)
+	{
+		dup2(original_stdout, STDOUT_FILENO);
+	}
+	return;
 }
 
 // Utility function to print command line, uncomment for use.
