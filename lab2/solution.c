@@ -24,10 +24,12 @@ static void execute_expression (const struct expr *e)
 		exit(6);
 	}
 	else {
-		char* arg = NULL;
-		e->cmd.args[e->cmd.arg_count] = arg;
 		execvp(e->cmd.exe, e->cmd.args);
-		printf("This shouldn't be printed while executing the command\n");
+		// printf("If command %s has executed properly, this will not be printed\n", e->cmd.exe);
+		// printf("It was given these arguments: ");
+		// for (uint32_t i = 0; i < e->cmd.arg_count; ++i)
+		// 	printf(" %s", e->cmd.args[i]);
+		// printf("\n");
 		exit(1);
 	}
 }
@@ -36,14 +38,30 @@ static char* execute_list_of_expressions(const struct expr *e) {
 	int wstatus = -1;
 	int status_code = -1;
 	char* final_directory = NULL;
+	int original_stdout = -1, original_stdin = -1;
+	int fd[2];
+	bool fd_open;
 	// Get parameters:
 	while (e != NULL)
 	{
+		// redirect output to pipe
+		if(e->next && e->next->type == EXPR_TYPE_PIPE && fd_open) {
+			fd_open = true;
+			if (pipe(fd) == -1){
+				printf("An error occurred while opening the pipe\n");
+				fd_open = false;
+			}	
+			printf("output redirected to pipe\n");
+			original_stdout = dup(STDOUT_FILENO);
+			dup2(fd[1], STDOUT_FILENO);
+			close(fd[1]);
+		}
+
 		if (e->type == EXPR_TYPE_COMMAND)
 		{
 			int pid2 = fork();
 			if (pid2 == -1) {
-				printf("An error occured with the second fork for execution\n");
+				printf("An error occurred with the second fork for execution\n");
 				exit(1);
 			}
 			if(pid2 == 0){
@@ -71,31 +89,51 @@ static char* execute_list_of_expressions(const struct expr *e) {
 				else {
 					printf("Waited for command execution result but none\n");
 				}
+				// Redirect input to stdin if necessary.
+				if	(original_stdin != -1 && fd_open) {
+					dup2(original_stdin, STDIN_FILENO);
+					original_stdin = -1;
+				}
 			}
 		}
 		else if (e->type == EXPR_TYPE_PIPE)
 		{
-			// Create a pipe to connect current output with input of next expression
+			if(fd_open) {
+				if(original_stdout != -1) {
+					// redirect output to stdout
+					dup2(original_stdout, STDOUT_FILENO);
+					original_stdout = -1;
+				}
+				// redirect input to pipe
+				original_stdin = dup(STDIN_FILENO);
+				dup2(fd[0], STDIN_FILENO);
+				close(fd[0]);
+				//printf("Output redirected to stdout, input redirected to pipe\n");
+			}
+
 		}
 		else if (e->type == EXPR_TYPE_AND)
 		{
-			// Execute next command if last one was sucess
+			// If last command wasn't a success, skip next.
 			if(status_code != 0){
-				break;
+				e = e->next;
 			}
 		}
 		else if (e->type == EXPR_TYPE_OR)
 		{
-			// Execute next command if last one failed
+			// If last one didn't fail, skip next command.
 			if(status_code == 0) {
-				break;
+				e = e->next;
 			}
 		}
 		else
 		{
 			assert(false);
 		}
-		e = e->next;
+		if(e)
+		{
+			e = e->next;
+		}
 	}
 	return final_directory;
 }
@@ -125,7 +163,7 @@ execute_command_line(const struct command_line *line)
 	int fd[2];
 	bool fd_open = true;
 	if (pipe(fd) == -1){
-		printf("An error occorued while opening the pipe\n");
+		printf("An error occurred while opening the pipe\n");
 		fd_open = false;
 	}
 
@@ -133,7 +171,7 @@ execute_command_line(const struct command_line *line)
 	int pid = fork();
 	if (pid == -1)
 	{
-		printf("An error occured with fork at command line execution\n");
+		printf("An error occurred with fork at command line execution\n");
 		exit(1);
 	}
 
@@ -143,10 +181,11 @@ execute_command_line(const struct command_line *line)
 		const struct expr *e = line->head;
 		char* final_directory = execute_list_of_expressions(e);
 		close(fd[0]);
-		if(fd_open){
+		if(final_directory && fd_open){
 			int size = (int)strlen(final_directory);
 			write(fd[1], &size, sizeof(int));
 			write(fd[1], final_directory, size);
+			exit(6);
 		}
 		close(fd[1]);
 		exit(0);
@@ -162,24 +201,27 @@ execute_command_line(const struct command_line *line)
 			if (WIFEXITED(wstatus))
 			{
 				int status_code = WEXITSTATUS(wstatus);
-				// Our unique exit code.
+				// unique exit code.
 				if (status_code == 5)
 				{
 					exit(0);
 				}
-			}
-			close(fd[1]);
-			char* final_directory = NULL;
-			int size;
-			if(fd_open){
-				if(read(fd[0], &size, sizeof(int))) {
-					final_directory = malloc(size);
+				close(fd[1]);
+				char* final_directory = NULL;
+				int size;
+				// unique cd code.
+				if(fd_open && status_code == 6){
+					if(read(fd[0], &size, sizeof(int))) {
+						final_directory = malloc(size);
+					}
+					if(read(fd[0], final_directory, size)) {
+						chdir(final_directory);
+						// printf("directory is changed to %s\n", final_directory);
+					}
+					free(final_directory);
 				}
-				if(read(fd[0], final_directory, size)) {
-					chdir(final_directory);
-				}
+				close(fd[0]);
 			}
-			close(fd[0]);
 		}
 	}
 	// close the output path to a file if necessary.

@@ -6,7 +6,7 @@ C program that takes file names with numbers, sorts each of them individually wi
 
 Please compile it with:
 ```
-gcc -Wextra -Werror -Wall -Wno-gnu-folding-constant -ldl -rdynamic ./lab1/solution.c ./lab1/libcoro.c heap_help.c
+gcc -Wextra -Werror -Wall -Wno-gnu-folding-constant -ldl -rdynamic ./lab1/solution.c ./lab1/libcoro.c ./utils/heap_help.c
 ```
 And run it with the files you want using:\
 *HHREPORT=l will enable memory leak checks.* 
@@ -24,7 +24,7 @@ Simplified version of a command line.
 
 Please compile it with
 ```
-gcc -Wextra -Werror -Wall -Wno-gnu-folding-constant ./lab2/solution.c ./lab2/parser.c
+gcc -Wextra -Werror -Wall -Wno-gnu-folding-constant ./lab2/solution.c ./lab2/parser.c ./utils/heap_help.c
 ```
 and run it using 
 ```
