@@ -112,7 +112,7 @@ void
 parser_feed(struct parser *p, const char *str, uint32_t len)
 {
 	uint32_t cap = p->capacity - p->size;
-	if (cap < len) {
+	if (cap <= len) {
 		uint32_t new_capacity = (p->capacity + 1) * 2;
 		if (new_capacity - p->size < len)
 			new_capacity = p->size + len;

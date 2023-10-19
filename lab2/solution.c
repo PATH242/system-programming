@@ -11,6 +11,7 @@
 #include <sys/wait.h>
 #include <stdlib.h>
 
+// Simple execution of one expression.
 static void execute_expression (const struct expr *e)
 {
 	// Handle exit exception 
@@ -24,6 +25,7 @@ static void execute_expression (const struct expr *e)
 		exit(6);
 	}
 	else {
+		e->cmd.args[e->cmd.arg_count] = '\0';
 		execvp(e->cmd.exe, e->cmd.args);
 		// printf("If command %s has executed properly, this will not be printed\n", e->cmd.exe);
 		// printf("It was given these arguments: ");
@@ -34,6 +36,12 @@ static void execute_expression (const struct expr *e)
 	}
 }
 
+// This function handles the execution of expressions and their connections by
+// 1) Redirecting stdout to a pipe if we have | after an expression
+// 2) Redirection output to stdout after we process |
+// 3) Redirecting stdin to a pipe at that point
+// 4) Redirecting input back to stdin after we process the expression after |
+// 5) Handling ||, and && by keeping track of the exit code of the prior process.
 static char* execute_list_of_expressions(const struct expr *e) {
 	int wstatus = -1;
 	int status_code = -1;
@@ -45,16 +53,16 @@ static char* execute_list_of_expressions(const struct expr *e) {
 	while (e != NULL)
 	{
 		// redirect output to pipe
-		if(e->next && e->next->type == EXPR_TYPE_PIPE && fd_open) {
-			fd_open = true;
+		if(e->next && e->next->type == EXPR_TYPE_PIPE) {
 			if (pipe(fd) == -1){
 				printf("An error occurred while opening the pipe\n");
 				fd_open = false;
 			}	
-			printf("output redirected to pipe\n");
+			// printf("output redirected to pipe\n");
 			original_stdout = dup(STDOUT_FILENO);
 			dup2(fd[1], STDOUT_FILENO);
 			close(fd[1]);
+			fd_open = true;
 		}
 
 		if (e->type == EXPR_TYPE_COMMAND)
@@ -83,14 +91,14 @@ static char* execute_list_of_expressions(const struct expr *e) {
 					}
 					else
 					if (status_code != 0) {
-						printf("Execution of command failed with code %d\n", status_code);
+						//printf("Execution of command failed with code %d\n", status_code);
 					}
 				}
 				else {
-					printf("Waited for command execution result but none\n");
+					// printf("Waited for command execution result but none\n");
 				}
 				// Redirect input to stdin if necessary.
-				if	(original_stdin != -1 && fd_open) {
+				if	(original_stdin != -1) {
 					dup2(original_stdin, STDIN_FILENO);
 					original_stdin = -1;
 				}
@@ -99,8 +107,8 @@ static char* execute_list_of_expressions(const struct expr *e) {
 		else if (e->type == EXPR_TYPE_PIPE)
 		{
 			if(fd_open) {
+				// redirect output to stdout
 				if(original_stdout != -1) {
-					// redirect output to stdout
 					dup2(original_stdout, STDOUT_FILENO);
 					original_stdout = -1;
 				}
@@ -108,21 +116,22 @@ static char* execute_list_of_expressions(const struct expr *e) {
 				original_stdin = dup(STDIN_FILENO);
 				dup2(fd[0], STDIN_FILENO);
 				close(fd[0]);
-				//printf("Output redirected to stdout, input redirected to pipe\n");
+				fd_open = false;
+				// printf("Output redirected to stdout, input redirected to pipe\n");
 			}
 
 		}
 		else if (e->type == EXPR_TYPE_AND)
 		{
 			// If last command wasn't a success, skip next.
-			if(status_code != 0){
+			if(status_code != 0 && status_code != 6){
 				e = e->next;
 			}
 		}
 		else if (e->type == EXPR_TYPE_OR)
 		{
 			// If last one didn't fail, skip next command.
-			if(status_code == 0) {
+			if(status_code == 0 || status_code == 6) {
 				e = e->next;
 			}
 		}
@@ -138,6 +147,13 @@ static char* execute_list_of_expressions(const struct expr *e) {
 	return final_directory;
 }
 
+// This function handles the external effects of a command line
+// 1) Redirecting ouput to a file if necessary
+// 2) If process is not a background process, 
+// 	  it waits for it and processes its exit code.
+// 2) Exits code if it gets a special exit code.
+// 3) Changing directory (by using pipes between child and parent).
+// 4) Redirecting output back to STDOUT
 static void
 execute_command_line(const struct command_line *line)
 {
@@ -146,7 +162,7 @@ execute_command_line(const struct command_line *line)
 	int original_stdout;
 	if (line->out_type == OUTPUT_TYPE_FILE_NEW)
 	{
-		int file = open(line->out_file, O_WRONLY | O_CREAT, 0777);
+		int file = open(line->out_file, O_WRONLY | O_CREAT |  O_TRUNC, 0777);
 		original_stdout = dup(STDOUT_FILENO);
 		dup2(file, STDOUT_FILENO);
 		close(file);
@@ -185,6 +201,7 @@ execute_command_line(const struct command_line *line)
 			int size = (int)strlen(final_directory);
 			write(fd[1], &size, sizeof(int));
 			write(fd[1], final_directory, size);
+			close(fd[1]);
 			exit(6);
 		}
 		close(fd[1]);
@@ -212,7 +229,7 @@ execute_command_line(const struct command_line *line)
 				// unique cd code.
 				if(fd_open && status_code == 6){
 					if(read(fd[0], &size, sizeof(int))) {
-						final_directory = malloc(size);
+						final_directory = malloc(size+1);
 					}
 					if(read(fd[0], final_directory, size)) {
 						chdir(final_directory);
