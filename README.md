@@ -24,7 +24,7 @@ Simplified version of a command line.
 
 Please compile it with
 ```
-gcc -Wextra -Werror -Wall -Wno-gnu-folding-constant ./lab2/solution.c ./lab2/parser.c ./utils/heap_help.c
+gcc -Wextra -Werror -Wall -Wno-gnu-folding-constant ./lab2/solution.c ./lab2/parser.c
 ```
 and run it using 
 ```

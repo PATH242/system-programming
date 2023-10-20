@@ -25,13 +25,9 @@ static void execute_expression (const struct expr *e)
 		exit(6);
 	}
 	else {
-		e->cmd.args[e->cmd.arg_count] = '\0';
+		e->cmd.args[e->cmd.arg_count] = NULL;
 		execvp(e->cmd.exe, e->cmd.args);
 		// printf("If command %s has executed properly, this will not be printed\n", e->cmd.exe);
-		// printf("It was given these arguments: ");
-		// for (uint32_t i = 0; i < e->cmd.arg_count; ++i)
-		// 	printf(" %s", e->cmd.args[i]);
-		// printf("\n");
 		exit(1);
 	}
 }
@@ -46,9 +42,9 @@ static char* execute_list_of_expressions(const struct expr *e) {
 	int wstatus = -1;
 	int status_code = -1;
 	char* final_directory = NULL;
-	int original_stdout = -1, original_stdin = -1;
+	// int original_stdout = -1, original_stdin = -1;
+	int stdout_fd = -1, stdin_fd = -1;
 	int fd[2];
-	bool fd_open;
 	// Get parameters:
 	while (e != NULL)
 	{
@@ -56,13 +52,8 @@ static char* execute_list_of_expressions(const struct expr *e) {
 		if(e->next && e->next->type == EXPR_TYPE_PIPE) {
 			if (pipe(fd) == -1){
 				printf("An error occurred while opening the pipe\n");
-				fd_open = false;
-			}	
-			// printf("output redirected to pipe\n");
-			original_stdout = dup(STDOUT_FILENO);
-			dup2(fd[1], STDOUT_FILENO);
-			close(fd[1]);
-			fd_open = true;
+			}
+			stdout_fd = fd[1];
 		}
 
 		if (e->type == EXPR_TYPE_COMMAND)
@@ -72,54 +63,58 @@ static char* execute_list_of_expressions(const struct expr *e) {
 				printf("An error occurred with the second fork for execution\n");
 				exit(1);
 			}
-			if(pid2 == 0){
+			if(pid2 == 0) {
+				if(stdin_fd != -1){
+					dup2(stdin_fd, STDIN_FILENO);
+					close(stdin_fd);
+					//printf("Input redirected to pipe\n");
+				}
+				if(stdout_fd != -1) {
+					//fprintf(stderr, "output redirected to pipe\n");
+					dup2(stdout_fd, STDOUT_FILENO);
+					close(stdout_fd);
+				}
 				execute_expression(e);
 			}
 			else {
-				wait(&wstatus);
-				if(WIFEXITED(wstatus)) {
-					status_code = WEXITSTATUS(wstatus);
-					if (status_code == 5) {
-						// Unique exit code.
-						printf("Exiting terminal\n");
-						exit(5);
-					}
-					else
-					if(status_code == 6) {
+				// if next is pipe, don't wait and start next process, else, wait
+				if(e->next && e->next->type == EXPR_TYPE_PIPE)
+				{
+					if(!strcmp(e->cmd.exe, "cd") && e->cmd.arg_count == 2) {
 						chdir(e->cmd.args[1]);
 						final_directory = e->cmd.args[1];
 					}
-					else
-					if (status_code != 0) {
-						//printf("Execution of command failed with code %d\n", status_code);
+				}
+				else
+				{
+					wait(&wstatus);
+					if(WIFEXITED(wstatus)) {
+						status_code = WEXITSTATUS(wstatus);
+						if (status_code == 5) {
+							// Unique exit code.
+							// printf("Exiting terminal\n");
+							exit(5);
+						}
+						else
+						if(status_code == 6) {
+							chdir(e->cmd.args[1]);
+							final_directory = e->cmd.args[1];
+						}
+						else
+						if (status_code != 0) {
+							//printf("Execution of command failed with code %d\n", status_code);
+						}
 					}
+
 				}
-				else {
-					// printf("Waited for command execution result but none\n");
-				}
-				// Redirect input to stdin if necessary.
-				if	(original_stdin != -1) {
-					dup2(original_stdin, STDIN_FILENO);
-					original_stdin = -1;
-				}
+
 			}
 		}
 		else if (e->type == EXPR_TYPE_PIPE)
 		{
-			if(fd_open) {
-				// redirect output to stdout
-				if(original_stdout != -1) {
-					dup2(original_stdout, STDOUT_FILENO);
-					original_stdout = -1;
-				}
-				// redirect input to pipe
-				original_stdin = dup(STDIN_FILENO);
-				dup2(fd[0], STDIN_FILENO);
-				close(fd[0]);
-				fd_open = false;
-				// printf("Output redirected to stdout, input redirected to pipe\n");
-			}
-
+			close(stdout_fd);
+			stdout_fd = -1;
+			stdin_fd = fd[0];
 		}
 		else if (e->type == EXPR_TYPE_AND)
 		{

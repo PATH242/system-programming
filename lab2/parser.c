@@ -63,7 +63,6 @@ token_reset(struct token *t)
 static void
 command_append_arg(struct command *cmd, char *arg)
 {
-	// PS: you changed the +1 to +2 here for easier testing
 	if (cmd->arg_count == cmd->arg_capacity) {
 		cmd->arg_capacity = (cmd->arg_capacity + 2) * 2;
 		cmd->args = realloc(cmd->args, sizeof(*cmd->args) * cmd->arg_capacity);
@@ -112,7 +111,7 @@ void
 parser_feed(struct parser *p, const char *str, uint32_t len)
 {
 	uint32_t cap = p->capacity - p->size;
-	if (cap <= len) {
+	if (cap < len) {
 		uint32_t new_capacity = (p->capacity + 1) * 2;
 		if (new_capacity - p->size < len)
 			new_capacity = p->size + len;
@@ -203,6 +202,8 @@ parse_token(const char *pos, const char *end, struct token *out)
 		case '&':
 		case '|':
 		case '>':
+			if (quote != 0)
+				goto append_and_next;
 			if (out->size > 0) {
 				out->type = TOKEN_TYPE_STR;
 				return pos - begin;
@@ -355,7 +356,6 @@ parser_pop_next(struct parser *p, struct command_line **out)
 			e->type = EXPR_TYPE_OR;
 			command_line_append(line, e);
 			continue;
-		// TODO: parse file too
 		case TOKEN_TYPE_OUT_NEW:
 		case TOKEN_TYPE_OUT_APPEND:
 		case TOKEN_TYPE_BACKGROUND:
