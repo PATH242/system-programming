@@ -6,37 +6,37 @@
 #include <string.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <signal.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <stdlib.h>
+
+// constants used in code
+#define EXIT_CODE 	5
+#define CD_CODE 	6
 
 // Simple execution of one expression.
 static void execute_expression (const struct expr *e)
 {
 	// Handle exit exception 
 	if(!strcmp(e->cmd.exe, "exit") && e->cmd.arg_count == 1) {
-		// Unique exit code
-		exit(5);
+		exit(EXIT_CODE);
 	}
 	else
 	if (!strcmp(e->cmd.exe, "cd") && e->cmd.arg_count == 2) {
-		// Unique cd code.
-		exit(6);
+		exit(CD_CODE);
 	}
 	else {
 		e->cmd.args[e->cmd.arg_count] = NULL;
 		execvp(e->cmd.exe, e->cmd.args);
-		// printf("If command %s has executed properly, this will not be printed\n", e->cmd.exe);
 		exit(1);
 	}
 }
 
 // This function handles the execution of expressions and their connections by
-// 1) Redirecting stdout to a pipe if we have | after an expression
-// 2) Redirection output to stdout after we process |
-// 3) Redirecting stdin to a pipe at that point
-// 4) Redirecting input back to stdin after we process the expression after |
+// 1) Redirecting stdout to a pipe if we have | after an expression (in child process)
+// 2) Save the input pipe associated with the prior type
+// 3) Redirecting stdin to that pipe in the following expression
+// 4) Consecutive pipes are handled by using different FDs
 // 5) Handling ||, and && by keeping track of the exit code of the prior process.
 static char* execute_list_of_expressions(const struct expr *e) {
 	int wstatus = -1;
@@ -90,20 +90,19 @@ static char* execute_list_of_expressions(const struct expr *e) {
 					wait(&wstatus);
 					if(WIFEXITED(wstatus)) {
 						status_code = WEXITSTATUS(wstatus);
-						if (status_code == 5) {
-							// Unique exit code.
+						if (status_code == EXIT_CODE) {
 							// printf("Exiting terminal\n");
-							exit(5);
+							exit(0);
 						}
 						else
-						if(status_code == 6) {
+						if(status_code == CD_CODE) {
 							chdir(e->cmd.args[1]);
 							final_directory = e->cmd.args[1];
 						}
-						else
-						if (status_code != 0) {
-							//printf("Execution of command failed with code %d\n", status_code);
-						}
+						// else
+						// if (status_code != 0) {
+						// 	//printf("Execution of command failed with code %d\n", status_code);
+						// }
 					}
 
 				}
@@ -197,6 +196,7 @@ execute_command_line(const struct command_line *line)
 			write(fd[1], &size, sizeof(int));
 			write(fd[1], final_directory, size);
 			close(fd[1]);
+			free(final_directory);
 			exit(6);
 		}
 		close(fd[1]);
@@ -213,16 +213,14 @@ execute_command_line(const struct command_line *line)
 			if (WIFEXITED(wstatus))
 			{
 				int status_code = WEXITSTATUS(wstatus);
-				// unique exit code.
-				if (status_code == 5)
+				if (status_code == EXIT_CODE)
 				{
 					exit(0);
 				}
 				close(fd[1]);
 				char* final_directory = NULL;
 				int size;
-				// unique cd code.
-				if(fd_open && status_code == 6){
+				if(fd_open && status_code == CD_CODE){
 					if(read(fd[0], &size, sizeof(int))) {
 						final_directory = malloc(size+1);
 					}
