@@ -34,7 +34,7 @@ static void execute_expression (const struct expr *e)
 
 // This function handles the execution of expressions and their connections by
 // 1) Redirecting stdout to a pipe if we have | after an expression (in child process)
-// 2) Save the input pipe associated with the prior type
+// 2) Save the input pipe associated with the prior fd
 // 3) Redirecting stdin to that pipe in the following expression
 // 4) Consecutive pipes are handled by using different FDs
 // 5) Handling ||, and && by keeping track of the exit code of the prior process.

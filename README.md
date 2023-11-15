@@ -31,3 +31,17 @@ and run it using
 ./a.out 
 ```
 then start using it as a terminal. If you need to exit, type exit.
+
+### Lab 3
+Simple file system that supports:
+    Open via FD.
+    Read via FD.
+    Write via FD.
+    Close FD.
+    Delete via file name.
+and permission flags.
+Deleted files remain accessible through the fds opened before deletion, and is fully deleted after these fds close.
+To run on tests:
+```
+cd lab3 && make && ./a.out
+```
