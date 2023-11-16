@@ -69,20 +69,19 @@ int thread_pool_delete(struct thread_pool *pool)
 	}
 
 	pool->delete_pool = 1;
-	pthread_cond_signal(&(pool->queue_cond));	
-	// todo: change...
-	sleep(0.5);
-	free(pool->tasks_queue);
+	pthread_cond_broadcast(&(pool->queue_cond));
 	for (int i = 0; i < pool->active_threads; i++)
 	{
 		free(pool->threads[i]);
 		pool->threads[i] = NULL;
 	}
+
+	free(pool->tasks_queue);
 	free(pool->threads);
 	pthread_mutex_destroy(&(pool->queue_mutex));
 	pthread_mutex_destroy(&(pool->active_tasks_mutex));
 	pthread_mutex_destroy(&(pool->tasks_left_mutex));
-	// pthread_cond_destroy(&(pool->queue_cond));
+	pthread_cond_destroy(&(pool->queue_cond));
 	free(pool);
 	return 0;
 }
@@ -97,7 +96,6 @@ void execute_task(thread_task *task)
 	task->is_finished = true;
 	pthread_mutex_unlock(&task->finished_mutex);
 	task->is_in_pool = false;
-	// pthread_cond_signal(&(task->finished_cond));
 }
 
 void *thread_pool_execute(void *void_pool)
@@ -106,7 +104,7 @@ void *thread_pool_execute(void *void_pool)
 	while (!pool->delete_pool)
 	{
 		pthread_mutex_lock(&(pool->queue_mutex));
-		while (pool->tasks_left == 0)
+		while (!pool->delete_pool && pool->tasks_left == 0)
 		{
 			pthread_cond_wait(&(pool->queue_cond), &(pool->queue_mutex));
 		}
@@ -168,6 +166,8 @@ int thread_pool_push_task(struct thread_pool *pool, struct thread_task *task)
 	pthread_mutex_unlock(&pool->tasks_left_mutex);
 
 	pthread_mutex_unlock(&(pool->queue_mutex));
+
+	// Gradually start threads as more tasks are pushed.
 	if (pool->active_threads < pool->tasks_left && pool->active_threads < pool->total_threads)
 	{
 		pool->threads[pool->active_threads] = malloc(sizeof(pthread_t));
