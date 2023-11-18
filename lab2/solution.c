@@ -15,19 +15,25 @@
 #define CD_CODE 	6
 
 // Simple execution of one expression.
-static void execute_expression (const struct expr *e)
+static void execute_expression (const struct expr *e, struct command_line* line, struct parser *p)
 {
 	// Handle exit exception 
 	if(!strcmp(e->cmd.exe, "exit") && e->cmd.arg_count == 1) {
+		command_line_delete(line);
+		parser_delete(p);
 		exit(EXIT_CODE);
 	}
 	else
 	if (!strcmp(e->cmd.exe, "cd") && e->cmd.arg_count == 2) {
+		command_line_delete(line);
+		parser_delete(p);
 		exit(CD_CODE);
 	}
 	else {
 		e->cmd.args[e->cmd.arg_count] = NULL;
 		execvp(e->cmd.exe, e->cmd.args);
+		command_line_delete(line);
+		parser_delete(p);
 		exit(1);
 	}
 }
@@ -38,7 +44,7 @@ static void execute_expression (const struct expr *e)
 // 3) Redirecting stdin to that pipe in the following expression
 // 4) Consecutive pipes are handled by using different FDs
 // 5) Handling ||, and && by keeping track of the exit code of the prior process.
-static char* execute_list_of_expressions(const struct expr *e) {
+static char* execute_list_of_expressions(const struct expr *e, struct command_line *line, struct parser *p) {
 	int wstatus = -1;
 	int status_code = -1;
 	char* final_directory = NULL;
@@ -74,7 +80,7 @@ static char* execute_list_of_expressions(const struct expr *e) {
 					dup2(stdout_fd, STDOUT_FILENO);
 					close(stdout_fd);
 				}
-				execute_expression(e);
+				execute_expression(e, line, p);
 			}
 			else {
 				// if next is pipe, don't wait and start next process, else, wait
@@ -91,8 +97,9 @@ static char* execute_list_of_expressions(const struct expr *e) {
 					if(WIFEXITED(wstatus)) {
 						status_code = WEXITSTATUS(wstatus);
 						if (status_code == EXIT_CODE) {
-							// printf("Exiting terminal\n");
-							exit(0);
+							command_line_delete(line);
+							parser_delete(p);
+							exit(EXIT_CODE);
 						}
 						else
 						if(status_code == CD_CODE) {
@@ -104,7 +111,6 @@ static char* execute_list_of_expressions(const struct expr *e) {
 						// 	//printf("Execution of command failed with code %d\n", status_code);
 						// }
 					}
-
 				}
 
 			}
@@ -148,8 +154,8 @@ static char* execute_list_of_expressions(const struct expr *e) {
 // 2) Exits code if it gets a special exit code.
 // 3) Changing directory (by using pipes between child and parent).
 // 4) Redirecting output back to STDOUT
-static void
-execute_command_line(const struct command_line *line)
+static int
+execute_command_line(struct command_line *line, struct parser *p)
 {
 	assert(line != NULL);
 	// Redirect output path to a file if necessary.
@@ -188,17 +194,20 @@ execute_command_line(const struct command_line *line)
 	// child process
 	if (pid == 0)
 	{
-		const struct expr *e = line->head;
-		char* final_directory = execute_list_of_expressions(e);
+		char* final_directory = execute_list_of_expressions(line->head, line, p);
 		close(fd[0]);
 		if(final_directory && fd_open){
 			int size = (int)strlen(final_directory);
 			write(fd[1], &size, sizeof(int));
 			write(fd[1], final_directory, size);
-			close(fd[1]);
-			free(final_directory);
-			exit(6);
+			command_line_delete(line);
+			parser_delete(p);
+			exit(CD_CODE);
 		}
+		close(fd[1]);
+		command_line_delete(line);
+		parser_delete(p);
+		free(final_directory);
 		close(fd[1]);
 		exit(0);
 	}
@@ -215,8 +224,9 @@ execute_command_line(const struct command_line *line)
 				int status_code = WEXITSTATUS(wstatus);
 				if (status_code == EXIT_CODE)
 				{
-					exit(0);
+					return EXIT_CODE;
 				}
+				
 				close(fd[1]);
 				char* final_directory = NULL;
 				int size;
@@ -239,7 +249,7 @@ execute_command_line(const struct command_line *line)
 	{
 		dup2(original_stdout, STDOUT_FILENO);
 	}
-	return;
+	return 0;
 }
 
 // Utility function to print command line, uncomment for use.
@@ -286,6 +296,7 @@ int main(void)
 	char buf[buf_size];
 	int rc;
 	struct parser *p = parser_new();
+	int exit = 0;
 	while ((rc = read(STDIN_FILENO, buf, buf_size)) > 0) {
 		parser_feed(p, buf, rc);
 		struct command_line *line = NULL;
@@ -297,8 +308,17 @@ int main(void)
 				printf("Error: %d\n", (int)err);
 				continue;
 			}
-			execute_command_line(line);
+			if(execute_command_line(line, p) == EXIT_CODE)
+			{
+				exit = 1;
+				command_line_delete(line);
+				break;
+			}
 			command_line_delete(line);
+		}
+		if(exit)
+		{
+			break;
 		}
 	}
 	parser_delete(p);
