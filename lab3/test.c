@@ -450,9 +450,9 @@ main(void)
 	test_close();
 	test_io();
 	test_delete();
-	test_rights();
-	test_max_file_size();
 	test_stress_open();
+	test_max_file_size();
+	test_rights();
 	test_resize();
 
 	/* Free the memory to make the memory leak detector happy. */
