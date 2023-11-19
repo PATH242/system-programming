@@ -31,17 +31,29 @@ and run it using
 ./a.out 
 ```
 then start using it as a terminal. If you need to exit, type exit.
-
+Command line also supports:
+⇥   and, or operations: &&, ||
+⇥   pipes |
+⇥   background operations &
 ### Lab 3
 Simple file system that supports:
-    Open via FD.
-    Read via FD.
-    Write via FD.
-    Close FD.
-    Delete via file name.
+⇥   *Open via FD.*
+⇥   *Read via FD.*
+⇥   *Write via FD.*
+⇥   *Close FD.*
+⇥   *Delete via file name.*
 and permission flags.
-Deleted files remain accessible through the fds opened before deletion, and is fully deleted after these fds close.
+Deleted files remain accessible through the fds opened on them before deletion, and are fully deleted after these fds referencing them close.
+
 To run on tests:
 ```
 cd lab3 && make && ./a.out
+```
+
+### Lab 4
+Thread pool
+
+To run on tests:
+```
+cd lab4 && make && ./a.out
 ```
