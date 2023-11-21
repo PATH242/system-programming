@@ -15,7 +15,7 @@
 #define CD_CODE 	6
 
 // Simple execution of one expression.
-static void execute_expression (const struct expr *e, struct command_line* line, struct parser *p)
+static void execute_expression (struct expr *e, struct command_line* line, struct parser *p)
 {
 	// Handle exit exception 
 	if(!strcmp(e->cmd.exe, "exit") && e->cmd.arg_count == 1) {
@@ -30,6 +30,13 @@ static void execute_expression (const struct expr *e, struct command_line* line,
 		exit(CD_CODE);
 	}
 	else {
+		if(e->cmd.arg_count > 2)
+		{
+			e->cmd.arg_capacity = (e->cmd.arg_capacity + 1);
+			e->cmd.args = realloc(e->cmd.args, sizeof(e->cmd.args) * e->cmd.arg_capacity);
+			e->cmd.args[e->cmd.arg_count] = NULL;
+			e->cmd.arg_count ++;
+		}
 		execvp(e->cmd.exe, e->cmd.args);
 		command_line_delete(line);
 		parser_delete(p);
@@ -79,7 +86,7 @@ static char* execute_list_of_expressions(const struct expr *e, struct command_li
 					dup2(stdout_fd, STDOUT_FILENO);
 					close(stdout_fd);
 				}
-				execute_expression(e, line, p);
+				execute_expression((struct expr*)e, line, p);
 			}
 			else {
 				// if next is pipe, don't wait and start next process, else, wait
