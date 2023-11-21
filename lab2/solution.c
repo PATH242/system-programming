@@ -30,13 +30,16 @@ static void execute_expression (struct expr *e, struct command_line* line, struc
 		exit(CD_CODE);
 	}
 	else {
-		if(e->cmd.arg_count > 2)
-		{
-			e->cmd.arg_capacity = (e->cmd.arg_capacity + 1);
-			e->cmd.args = realloc(e->cmd.args, sizeof(e->cmd.args) * e->cmd.arg_capacity);
-			e->cmd.args[e->cmd.arg_count] = NULL;
-			e->cmd.arg_count ++;
-		}
+		// e->cmd.arg_capacity = (e->cmd.arg_capacity + 2);
+		// e->cmd.args = realloc(e->cmd.args, sizeof(e->cmd.args) * e->cmd.arg_capacity);
+		// e->cmd.args[e->cmd.arg_count+1] = NULL;
+		// for(int i = e->cmd.arg_count-1; i >= 0; i--)
+		// {
+		// 	e->cmd.args[i+1] = e->cmd.args[i];
+		// }
+		// e->cmd.args[0] = strdup(e->cmd.exe);
+		// e->cmd.arg_count += 2;
+		// print_command_line(line);
 		execvp(e->cmd.exe, e->cmd.args);
 		command_line_delete(line);
 		parser_delete(p);
