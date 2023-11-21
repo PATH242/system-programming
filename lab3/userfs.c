@@ -44,7 +44,6 @@ struct file
 	int number_of_blocks;
 	int deleted;
 	int size;
-	/* PUT HERE OTHER MEMBERS */
 };
 
 /** List of all files. */
@@ -91,6 +90,10 @@ struct file *search_files_for(const char *filename)
 		{
 			return i;
 		}
+		if(i == i->next)
+		{
+			break;
+		}
 	}
 	return NULL;
 }
@@ -115,7 +118,7 @@ int ufs_open(const char *filename, int flags)
 		}
 	}
 
-	struct file *my_file = malloc(sizeof(struct file));
+	struct file *my_file;
 	if (file_list == NULL || search_files_for(filename) == NULL)
 	{
 		if(!(flags & 1))
@@ -123,7 +126,7 @@ int ufs_open(const char *filename, int flags)
 			ufs_error_code = UFS_ERR_NO_FILE;
 			return -1;
 		}
-
+		my_file = malloc(sizeof(struct file));
 		my_file->file_name = strdup(filename);
 		my_file->prev = NULL;
 		my_file->next = NULL;
@@ -275,8 +278,6 @@ ufs_write(int fd, const char *buf, size_t size)
 		}
 		cur_size ++;
 	}
-	// printf("I was supposed to write %s\n", buf);
-	// printf("\n write is now %d, and cur_size is %d\n", file_descriptors[fd]->read_write_pointer, cur_size);
 	if(!cur_size)
 	{
 		return -1;
@@ -353,7 +354,6 @@ ufs_read(int fd, char *buf, size_t size)
 		}
 		cur_size ++;
 	}
-	// printf("I think I read %d characters\n", cur_size);
 	return cur_size;
 }
 
@@ -369,16 +369,27 @@ void fully_delete_file(struct file *deleted_file)
 			{
 				current->next->prev = current->prev;
 			}
-
 			if (current->prev)
 			{
 				current->prev->next = current->next;
-				// printf("setting the next of %p with %p\n", current->prev, current->next);
+				if(current->next == current->prev)
+				{
+					printf("something wrong is happening\n");
+					printf("setting the next of %p with %p\n", current->prev, current->next);
+				}
 
 			}
 			if(!current->next && !current->prev){
 				file_list = NULL;
 			}
+			else if(current->prev == NULL)
+			{
+				file_list = current->next;
+			}
+			break;
+		}
+		if(current->next == current)
+		{
 			break;
 		}
 		current = current->next;
@@ -393,8 +404,7 @@ void fully_delete_file(struct file *deleted_file)
 		free(tmp);
 	}
 	free(deleted_file->file_name);
-	// todo: free this, why wouldn't you?
-	// free(deleted_file);
+	free(deleted_file);
 }
 
 int ufs_close(int fd)
@@ -497,21 +507,14 @@ void ufs_destroy(void)
 	struct file* current_file = file_list;
 	while(current_file != NULL)
 	{
-		struct block* current_block = current_file->block_list;
-		struct block* tmp;
-		while(current_block != NULL) {
-			free(current_block->memory);
-			tmp = current_block->next;
-			free(current_block);
-			current_block = tmp;
-		}
-		struct file* tmp_file = current_file->next;
-		free(current_file);
-		current_file = tmp_file;
+		struct file* tmp_file = current_file;
+		current_file = current_file->next;
+		fully_delete_file(tmp_file);
 	}
 	
 	for(int i = 0; i < file_descriptor_capacity; i++)
 	{
 		free(file_descriptors[i]);
 	}
+	free(file_descriptors);
 }
