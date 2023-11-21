@@ -169,7 +169,6 @@ int ufs_open(const char *filename, int flags)
 	}
 
 	struct filedesc *new_fd = (struct filedesc*) malloc(sizeof(struct filedesc));
-	new_fd->file = malloc(sizeof(struct file));
 	new_fd->file = my_file;
 	new_fd->fd = my_fd;
 	new_fd->permissions = flags;
@@ -363,7 +362,7 @@ void fully_delete_file(struct file *deleted_file)
 	struct file *current = file_list;
 	while (current != NULL)
 	{
-		if (current->file_name == deleted_file->file_name && current->deleted && !current->refs_n)
+		if (current->file_name == deleted_file->file_name && current->deleted)
 		{
 			if (current->next)
 			{
@@ -419,7 +418,7 @@ int ufs_close(int fd)
 	{
 		fully_delete_file(file_descriptors[fd]->file);
 	}
-
+	free(file_descriptors[fd]);
 	file_descriptors[fd] = NULL;
 	file_descriptor_count--;
 	return 0;
