@@ -30,7 +30,6 @@ static void execute_expression (const struct expr *e, struct command_line* line,
 		exit(CD_CODE);
 	}
 	else {
-		e->cmd.args[e->cmd.arg_count] = NULL;
 		execvp(e->cmd.exe, e->cmd.args);
 		command_line_delete(line);
 		parser_delete(p);
