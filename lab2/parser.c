@@ -64,7 +64,7 @@ static void
 command_append_arg(struct command *cmd, char *arg)
 {
 	if (cmd->arg_count == cmd->arg_capacity) {
-		cmd->arg_capacity = (cmd->arg_capacity + 2) * 2;
+		cmd->arg_capacity = (cmd->arg_capacity + 1) * 2;
 		cmd->args = realloc(cmd->args, sizeof(*cmd->args) * cmd->arg_capacity);
 	} else {
 		assert(cmd->arg_count < cmd->arg_capacity);
