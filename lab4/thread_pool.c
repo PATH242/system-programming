@@ -203,6 +203,7 @@ int thread_task_new(struct thread_task **task, thread_task_f function, void *arg
 	(*task)->arg = arg;
 	(*task)->is_in_pool = false;
 	(*task)->is_finished = false;
+	(*task)->is_detached = false;
 	pthread_cond_init(&(*task)->finished_cond, NULL);
 	pthread_mutex_init(&(*task)->finished_mutex, NULL);
 	pthread_mutex_init(&(*task)->in_pool_mutex, NULL);
@@ -214,6 +215,10 @@ int thread_task_join(struct thread_task *task, void **result)
 	if (!task->is_in_pool && !task->is_finished)
 	{
 		return TPOOL_ERR_TASK_NOT_PUSHED;
+	}
+	if(task->is_detached)
+	{
+		return TPOOL_ERR_INVALID_ARGUMENT;	
 	}
 	pthread_mutex_lock(&(task->finished_mutex));
 	while (!task->is_finished)
