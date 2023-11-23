@@ -18,6 +18,7 @@ typedef struct thread_task
 	pthread_cond_t finished_cond;
 	pthread_mutex_t in_pool_mutex;
 	struct thread_task* next; 
+	bool is_detached;
 } thread_task;
 
 typedef struct thread_pool
@@ -103,6 +104,10 @@ void execute_task(thread_task *task)
 	pthread_mutex_unlock(&task->finished_mutex);
 	// Signal to task that it was executed: for join
 	pthread_cond_signal(&(task->finished_cond));
+	if(task->is_detached)
+	{
+		thread_task_delete(task);
+	}
 }
 
 void *thread_pool_execute(void *void_pool)
@@ -291,9 +296,17 @@ int thread_task_delete(struct thread_task *task)
 
 int thread_task_detach(struct thread_task *task)
 {
-	/* IMPLEMENT THIS FUNCTION */
-	(void)task;
-	return TPOOL_ERR_NOT_IMPLEMENTED;
+	if(!task->is_in_pool && !task->is_finished)
+	{
+		return TPOOL_ERR_TASK_NOT_PUSHED;
+	}
+
+	task->is_detached = true;
+	if(task->is_finished)
+	{
+		thread_task_delete(task);
+	}
+	return 0;
 }
 
 #endif
