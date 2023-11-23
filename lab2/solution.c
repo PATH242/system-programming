@@ -59,6 +59,7 @@ static char* execute_list_of_expressions(const struct expr *e, struct command_li
 	char* final_directory = NULL;
 	int stdout_fd = -1, stdin_fd = -1;
 	int fd[2];
+	int n_non_checked_processes = 0;
 	// Get parameters:
 	while (e != NULL)
 	{
@@ -96,6 +97,7 @@ static char* execute_list_of_expressions(const struct expr *e, struct command_li
 						chdir(e->cmd.args[0]);
 						final_directory = e->cmd.args[0];
 					}
+					n_non_checked_processes ++;
 				}
 				else
 				{
@@ -149,6 +151,12 @@ static char* execute_list_of_expressions(const struct expr *e, struct command_li
 		{
 			e = e->next;
 		}
+	}
+	printf("not checked is %d\n", n_non_checked_processes);
+	while(n_non_checked_processes--)
+	{
+		waitpid(-1, NULL, 0);
+		// printf("I did wait\n");
 	}
 	return final_directory;
 }
@@ -248,6 +256,10 @@ execute_command_line(struct command_line *line, struct parser *p)
 				close(fd[0]);
 			}
 		}
+		else
+		{
+			return 1;
+		}
 	}
 	// close the output path to a file if necessary.
 	if (line->out_type != OUTPUT_TYPE_STDOUT)
@@ -302,6 +314,7 @@ int main(void)
 	int rc;
 	struct parser *p = parser_new();
 	int exit = 0;
+	int n_background_lines = 0;
 	while ((rc = read(STDIN_FILENO, buf, buf_size)) > 0) {
 		parser_feed(p, buf, rc);
 		struct command_line *line = NULL;
@@ -313,18 +326,24 @@ int main(void)
 				printf("Error: %d\n", (int)err);
 				continue;
 			}
-			if(execute_command_line(line, p) == EXIT_CODE)
+			int status = execute_command_line(line, p);
+			if(status == EXIT_CODE)
 			{
 				exit = 1;
 				command_line_delete(line);
 				break;
 			}
+			n_background_lines += status;
 			command_line_delete(line);
 		}
 		if(exit)
 		{
 			break;
 		}
+	}
+	while(n_background_lines --)
+	{
+		waitpid(-1, NULL, 0);
 	}
 	parser_delete(p);
 	return 0;
