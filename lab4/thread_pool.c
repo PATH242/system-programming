@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <errno.h>
 
 typedef struct thread_task
 {
@@ -15,6 +16,7 @@ typedef struct thread_task
 	void *result;
 	pthread_mutex_t finished_mutex;
 	pthread_cond_t finished_cond;
+	pthread_mutex_t in_pool_mutex;
 	struct thread_task* next; 
 } thread_task;
 
@@ -96,8 +98,11 @@ void execute_task(thread_task *task)
 	{
 		task->result = task->function(task->arg);
 	}
+	pthread_mutex_lock(&task->finished_mutex);
 	task->is_finished = true;
-	task->is_in_pool = false;
+	pthread_mutex_unlock(&task->finished_mutex);
+	// Signal to task that it was executed: for join
+	pthread_cond_signal(&(task->finished_cond));
 }
 
 void *thread_pool_execute(void *void_pool)
@@ -126,16 +131,13 @@ void *thread_pool_execute(void *void_pool)
 			pthread_mutex_lock(&pool->active_tasks_mutex);
 			pool->active_tasks++;
 			pthread_mutex_unlock(&pool->active_tasks_mutex);
-
 			pthread_mutex_unlock(&(pool->queue_mutex));
-			pthread_mutex_lock(&current_task->finished_mutex);
+
 			execute_task(current_task);
+
 			pthread_mutex_lock(&pool->active_tasks_mutex);
 			pool->active_tasks--;
 			pthread_mutex_unlock(&pool->active_tasks_mutex);
-			// Signal to task that it was executed: for join
-			pthread_cond_signal(&(current_task->finished_cond));
-			pthread_mutex_unlock(&current_task->finished_mutex);
 		}
 		else
 		{
@@ -198,6 +200,7 @@ int thread_task_new(struct thread_task **task, thread_task_f function, void *arg
 	(*task)->is_finished = false;
 	pthread_cond_init(&(*task)->finished_cond, NULL);
 	pthread_mutex_init(&(*task)->finished_mutex, NULL);
+	pthread_mutex_init(&(*task)->in_pool_mutex, NULL);
 	return 0;
 }
 
@@ -213,6 +216,9 @@ int thread_task_join(struct thread_task *task, void **result)
 		pthread_cond_wait(&(task->finished_cond), &(task->finished_mutex));
 	}
 	pthread_mutex_unlock(&(task->finished_mutex));
+	pthread_mutex_lock(&(task->in_pool_mutex));
+	task->is_in_pool = false;
+	pthread_mutex_unlock(&(task->in_pool_mutex));
 	(*result) = task->result;
 	return 0;
 }
@@ -221,11 +227,43 @@ int thread_task_join(struct thread_task *task, void **result)
 
 int thread_task_timed_join(struct thread_task *task, double timeout, void **result)
 {
-	/* IMPLEMENT THIS FUNCTION */
-	(void)task;
-	(void)timeout;
-	(void)result;
-	return TPOOL_ERR_NOT_IMPLEMENTED;
+    if (!task->is_in_pool && !task->is_finished)
+    {
+        return TPOOL_ERR_TASK_NOT_PUSHED;
+    }
+	if (timeout < 0)
+    {
+        timeout = 0;
+    }
+    int response_code = 0;
+	struct timespec ts;
+	clock_gettime(CLOCK_REALTIME, &ts);
+	long int ts_ns = timeout * 1e9;
+	ts.tv_nsec += ts_ns;
+	if (ts.tv_nsec >= 1e9)
+	{
+	    ts.tv_sec += ((int)ts.tv_nsec / 1e9);
+	    ts.tv_nsec %= (int)1e9;
+	}
+    pthread_mutex_lock(&(task->finished_mutex));
+    while (!task->is_finished && response_code != ETIMEDOUT)
+    {
+        response_code = pthread_cond_timedwait(&(task->finished_cond), &(task->finished_mutex), &ts);
+		pthread_mutex_unlock(&(task->finished_mutex));
+	}
+
+	if (response_code == ETIMEDOUT)
+    {
+        return TPOOL_ERR_TIMEOUT;
+    }
+    else
+    {
+		pthread_mutex_lock(&(task->in_pool_mutex));
+		task->is_in_pool = false;
+		pthread_mutex_unlock(&(task->in_pool_mutex));
+        (*result) = task->result;
+        return 0;
+    }
 }
 
 #endif
@@ -242,6 +280,7 @@ int thread_task_delete(struct thread_task *task)
 	{
 		pthread_mutex_destroy(&(task->finished_mutex));
 		pthread_cond_destroy(&(task->finished_cond));
+		pthread_mutex_destroy(&(task->in_pool_mutex));
 		free(task);
 	}
 
