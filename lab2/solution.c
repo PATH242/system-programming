@@ -17,29 +17,29 @@
 // Simple execution of one expression.
 static void execute_expression (struct expr *e, struct command_line* line, struct parser *p)
 {
+	// Add command as first arg, and null to end of args.
+	e->cmd.arg_capacity +=  2;
+	e->cmd.args = realloc(e->cmd.args, sizeof(e->cmd.args) * e->cmd.arg_capacity);
+	e->cmd.args[e->cmd.arg_count+1] = NULL;
+	for(int i = e->cmd.arg_count-1; i >= 0; i--)
+	{
+		e->cmd.args[i+1] = e->cmd.args[i];
+	}
+	e->cmd.args[0] = strdup(e->cmd.exe);
+	e->cmd.arg_count += 2;
 	// Handle exit exception 
-	if(!strcmp(e->cmd.exe, "exit") && e->cmd.arg_count == 1) {
+	if(!strcmp(e->cmd.exe, "exit") && e->cmd.arg_count == 2) {
 		command_line_delete(line);
 		parser_delete(p);
 		exit(EXIT_CODE);
 	}
 	else
-	if (!strcmp(e->cmd.exe, "cd") && e->cmd.arg_count == 2) {
+	if (!strcmp(e->cmd.exe, "cd") && e->cmd.arg_count == 3) {
 		command_line_delete(line);
 		parser_delete(p);
 		exit(CD_CODE);
 	}
 	else {
-		// e->cmd.arg_capacity = (e->cmd.arg_capacity + 2);
-		// e->cmd.args = realloc(e->cmd.args, sizeof(e->cmd.args) * e->cmd.arg_capacity);
-		// e->cmd.args[e->cmd.arg_count+1] = NULL;
-		// for(int i = e->cmd.arg_count-1; i >= 0; i--)
-		// {
-		// 	e->cmd.args[i+1] = e->cmd.args[i];
-		// }
-		// e->cmd.args[0] = strdup(e->cmd.exe);
-		// e->cmd.arg_count += 2;
-		// print_command_line(line);
 		execvp(e->cmd.exe, e->cmd.args);
 		command_line_delete(line);
 		parser_delete(p);
@@ -57,7 +57,6 @@ static char* execute_list_of_expressions(const struct expr *e, struct command_li
 	int wstatus = -1;
 	int status_code = -1;
 	char* final_directory = NULL;
-	// int original_stdout = -1, original_stdin = -1;
 	int stdout_fd = -1, stdin_fd = -1;
 	int fd[2];
 	// Get parameters:
@@ -82,10 +81,8 @@ static char* execute_list_of_expressions(const struct expr *e, struct command_li
 				if(stdin_fd != -1){
 					dup2(stdin_fd, STDIN_FILENO);
 					close(stdin_fd);
-					//printf("Input redirected to pipe\n");
 				}
 				if(stdout_fd != -1) {
-					//fprintf(stderr, "output redirected to pipe\n");
 					dup2(stdout_fd, STDOUT_FILENO);
 					close(stdout_fd);
 				}
@@ -95,9 +92,9 @@ static char* execute_list_of_expressions(const struct expr *e, struct command_li
 				// if next is pipe, don't wait and start next process, else, wait
 				if(e->next && e->next->type == EXPR_TYPE_PIPE)
 				{
-					if(!strcmp(e->cmd.exe, "cd") && e->cmd.arg_count == 2) {
-						chdir(e->cmd.args[1]);
-						final_directory = e->cmd.args[1];
+					if(!strcmp(e->cmd.exe, "cd") && e->cmd.arg_count == 1) {
+						chdir(e->cmd.args[0]);
+						final_directory = e->cmd.args[0];
 					}
 				}
 				else
@@ -111,9 +108,9 @@ static char* execute_list_of_expressions(const struct expr *e, struct command_li
 							exit(EXIT_CODE);
 						}
 						else
-						if(status_code == CD_CODE) {
-							chdir(e->cmd.args[1]);
-							final_directory = e->cmd.args[1];
+						if(status_code == CD_CODE && e->cmd.arg_count == 1) {
+							chdir(e->cmd.args[0]);
+							final_directory = e->cmd.args[0];
 						}
 						// else
 						// if (status_code != 0) {
@@ -245,7 +242,6 @@ execute_command_line(struct command_line *line, struct parser *p)
 					}
 					if(read(fd[0], final_directory, size)) {
 						chdir(final_directory);
-						// printf("directory is changed to %s\n", final_directory);
 					}
 					free(final_directory);
 				}

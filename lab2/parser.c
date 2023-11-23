@@ -310,15 +310,11 @@ parser_pop_next(struct parser *p, struct command_line **out)
 			e->type = EXPR_TYPE_COMMAND;
 			e->cmd.exe = token_strdup(&token);
 			command_line_append(line, e);
-			command_append_arg(&line->tail->cmd, token_strdup(&token));
 			continue;
 		case TOKEN_TYPE_NEW_LINE:
 			/* Skip new lines. */
 			if (line->tail == NULL)
-			{
-				command_append_arg(&line->tail->cmd, NULL);
 				continue;
-			}
 			goto close_and_return;
 		case TOKEN_TYPE_PIPE:
 			if (line->tail == NULL) {
