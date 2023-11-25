@@ -18,7 +18,7 @@
 static void execute_expression (struct expr *e, struct command_line* line, struct parser *p)
 {
 	// Add command as first arg, and null to end of args.
-	e->cmd.arg_capacity +=  2;
+	e->cmd.arg_capacity =  e->cmd.arg_count + 2;
 	e->cmd.args = realloc(e->cmd.args, sizeof(e->cmd.args) * e->cmd.arg_capacity);
 	e->cmd.args[e->cmd.arg_count+1] = NULL;
 	for(int i = e->cmd.arg_count-1; i >= 0; i--)
@@ -27,13 +27,7 @@ static void execute_expression (struct expr *e, struct command_line* line, struc
 	}
 	e->cmd.args[0] = strdup(e->cmd.exe);
 	e->cmd.arg_count += 2;
-	// Handle exit exception 
-	if(!strcmp(e->cmd.exe, "exit") && e->cmd.arg_count == 2) {
-		command_line_delete(line);
-		parser_delete(p);
-		exit(EXIT_CODE);
-	}
-	else
+	// Handle CD exception.
 	if (!strcmp(e->cmd.exe, "cd") && e->cmd.arg_count == 3) {
 		command_line_delete(line);
 		parser_delete(p);
@@ -47,19 +41,40 @@ static void execute_expression (struct expr *e, struct command_line* line, struc
 	}
 }
 
+int get_exit_code(struct expr* e)
+{
+	int exit_code = 0;
+	if (e->type == EXPR_TYPE_COMMAND)
+	{
+		if(!strcmp(e->cmd.exe, "exit")
+			&& e->cmd.arg_count == 1)
+		{
+			char* end;
+			exit_code = strtol(e->cmd.args[0], &end, 0);
+		}
+	}
+	if(e)
+	{
+		e = e->next;
+	}
+	return exit_code;
+}
+
 // This function handles the execution of expressions and their connections by
 // 1) Redirecting stdout to a pipe if we have | after an expression (in child process)
 // 2) Save the input pipe associated with the prior fd
 // 3) Redirecting stdin to that pipe in the following expression
 // 4) Consecutive pipes are handled by using different FDs
 // 5) Handling ||, and && by keeping track of the exit code of the prior process.
-static char* execute_list_of_expressions(const struct expr *e, struct command_line *line, struct parser *p) {
-	int wstatus = -1;
+static char* execute_list_of_expressions(const struct expr *e, struct command_line *line, struct parser *p, int* exit_code) {
 	int status_code = -1;
+	*exit_code = 0;
 	char* final_directory = NULL;
-	int stdout_fd = -1, stdin_fd = -1;
+	int stdout_fd = -1, stdin_fd = -1, tmp_stdin_fd;
 	int fd[2];
 	int n_non_checked_processes = 0;
+	int* non_checked_processes = NULL;
+
 	// Get parameters:
 	while (e != NULL)
 	{
@@ -68,7 +83,10 @@ static char* execute_list_of_expressions(const struct expr *e, struct command_li
 			if (pipe(fd) == -1){
 				printf("An error occurred while opening the pipe\n");
 			}
-			stdout_fd = fd[1];
+			stdout_fd = dup(fd[1]);
+			tmp_stdin_fd = dup(fd[0]);
+			close(fd[0]);
+			close(fd[1]);
 		}
 
 		if (e->type == EXPR_TYPE_COMMAND)
@@ -84,8 +102,13 @@ static char* execute_list_of_expressions(const struct expr *e, struct command_li
 					close(stdin_fd);
 				}
 				if(stdout_fd != -1) {
+					close(tmp_stdin_fd);
 					dup2(stdout_fd, STDOUT_FILENO);
 					close(stdout_fd);
+				}
+				if(non_checked_processes)
+				{
+					free(non_checked_processes);
 				}
 				execute_expression((struct expr*)e, line, p);
 			}
@@ -98,48 +121,52 @@ static char* execute_list_of_expressions(const struct expr *e, struct command_li
 						final_directory = e->cmd.args[0];
 					}
 					n_non_checked_processes ++;
+					non_checked_processes = realloc(non_checked_processes, n_non_checked_processes * sizeof(int));
+					non_checked_processes[n_non_checked_processes-1] = pid2;
 				}
 				else
 				{
-					wait(&wstatus);
-					if(WIFEXITED(wstatus)) {
-						status_code = WEXITSTATUS(wstatus);
-						if (status_code == EXIT_CODE) {
-							command_line_delete(line);
-							parser_delete(p);
-							exit(EXIT_CODE);
+					waitpid(pid2, &status_code, 0);
+					status_code = WEXITSTATUS(status_code);
+					// Handle CD exception
+					if(status_code == CD_CODE && e->cmd.arg_count == 1)
+					{
+						chdir(e->cmd.args[0]);
+						final_directory = e->cmd.args[0];
+					}
+					else
+					{
+						*exit_code = get_exit_code((struct expr*)e);
+						if(!(*exit_code))
+						{
+							*exit_code = status_code;
 						}
-						else
-						if(status_code == CD_CODE && e->cmd.arg_count == 1) {
-							chdir(e->cmd.args[0]);
-							final_directory = e->cmd.args[0];
-						}
-						// else
-						// if (status_code != 0) {
-						// 	//printf("Execution of command failed with code %d\n", status_code);
-						// }
+						// printf("exit code is now %d because status was%d\n", *exit_code, status_code);
 					}
 				}
-
+				if(stdin_fd != -1){
+					close(stdin_fd);
+					stdin_fd = -1;
+				}
 			}
 		}
 		else if (e->type == EXPR_TYPE_PIPE)
 		{
 			close(stdout_fd);
 			stdout_fd = -1;
-			stdin_fd = fd[0];
+			stdin_fd = tmp_stdin_fd;
 		}
 		else if (e->type == EXPR_TYPE_AND)
 		{
 			// If last command wasn't a success, skip next.
-			if(status_code != 0 && status_code != 6){
+			if(status_code != 0 && status_code != CD_CODE){
 				e = e->next;
 			}
 		}
 		else if (e->type == EXPR_TYPE_OR)
 		{
 			// If last one didn't fail, skip next command.
-			if(status_code == 0 || status_code == 6) {
+			if(status_code == 0 || status_code == CD_CODE) {
 				e = e->next;
 			}
 		}
@@ -152,11 +179,15 @@ static char* execute_list_of_expressions(const struct expr *e, struct command_li
 			e = e->next;
 		}
 	}
-	printf("not checked is %d\n", n_non_checked_processes);
+	// printf("not checked is %d\n", n_non_checked_processes);
 	while(n_non_checked_processes--)
 	{
-		waitpid(-1, NULL, 0);
-		// printf("I did wait\n");
+		waitpid(non_checked_processes[n_non_checked_processes], NULL, 0);
+		// printf("waited for abandoned process %d\n", non_checked_processes[n_non_checked_processes]);
+	}
+	if(non_checked_processes)
+	{
+		free(non_checked_processes);
 	}
 	return final_directory;
 }
@@ -169,9 +200,16 @@ static char* execute_list_of_expressions(const struct expr *e, struct command_li
 // 3) Changing directory (by using pipes between child and parent).
 // 4) Redirecting output back to STDOUT
 static int
-execute_command_line(struct command_line *line, struct parser *p)
+execute_command_line(struct command_line *line, struct parser *p, int* exit_code)
 {
 	assert(line != NULL);
+	if(line->head == line->tail 
+		&& line->head->type == EXPR_TYPE_COMMAND
+		&& !strcmp(line->head->cmd.exe, "exit")
+		&& line->head->cmd.arg_count <= 1)
+	{
+		return EXIT_CODE;
+	}
 	// Redirect output path to a file if necessary.
 	int original_stdout;
 	if (line->out_type == OUTPUT_TYPE_FILE_NEW)
@@ -208,7 +246,7 @@ execute_command_line(struct command_line *line, struct parser *p)
 	// child process
 	if (pid == 0)
 	{
-		char* final_directory = execute_list_of_expressions(line->head, line, p);
+		char* final_directory = execute_list_of_expressions(line->head, line, p, exit_code);
 		close(fd[0]);
 		if(final_directory && fd_open){
 			int size = (int)strlen(final_directory);
@@ -223,7 +261,8 @@ execute_command_line(struct command_line *line, struct parser *p)
 		parser_delete(p);
 		free(final_directory);
 		close(fd[1]);
-		exit(0);
+		// Should be fine..
+		exit(*exit_code);
 	}
 	// Parent process.
 	else
@@ -236,10 +275,6 @@ execute_command_line(struct command_line *line, struct parser *p)
 			if (WIFEXITED(wstatus))
 			{
 				int status_code = WEXITSTATUS(wstatus);
-				if (status_code == EXIT_CODE)
-				{
-					return EXIT_CODE;
-				}
 				
 				close(fd[1]);
 				char* final_directory = NULL;
@@ -251,7 +286,13 @@ execute_command_line(struct command_line *line, struct parser *p)
 					if(read(fd[0], final_directory, size)) {
 						chdir(final_directory);
 					}
+					// printf("cd was alright all till the end!\n");
+					// printf("I even knew it was %s\n", final_directory);
 					free(final_directory);
+				}
+				else
+				{
+					*exit_code = status_code;
 				}
 				close(fd[0]);
 			}
@@ -313,7 +354,7 @@ int main(void)
 	char buf[buf_size];
 	int rc;
 	struct parser *p = parser_new();
-	int exit = 0;
+	int exit = 0, exit_code = 0;
 	int n_background_lines = 0;
 	while ((rc = read(STDIN_FILENO, buf, buf_size)) > 0) {
 		parser_feed(p, buf, rc);
@@ -326,10 +367,15 @@ int main(void)
 				printf("Error: %d\n", (int)err);
 				continue;
 			}
-			int status = execute_command_line(line, p);
+			int status = execute_command_line(line, p, &exit_code);
 			if(status == EXIT_CODE)
 			{
 				exit = 1;
+				exit_code = 0;
+				if(line->head->cmd.arg_count == 1)
+				{
+					exit_code = atoi(line->head->cmd.args[0]);
+				}
 				command_line_delete(line);
 				break;
 			}
@@ -346,5 +392,5 @@ int main(void)
 		waitpid(-1, NULL, 0);
 	}
 	parser_delete(p);
-	return 0;
+	return exit_code;
 }
