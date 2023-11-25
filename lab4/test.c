@@ -358,6 +358,13 @@ main(void)
 {
 	unit_test_start();
 
+	// for (int i = 0; i < 1000; ++i) {
+	// 	test_new();
+	// 	test_push();
+	// 	test_thread_pool_delete();
+	// 	test_thread_pool_max_tasks();
+	// }
+
 	test_new();
 	test_push();
 	test_thread_pool_delete();
