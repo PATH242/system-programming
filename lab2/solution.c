@@ -278,9 +278,10 @@ execute_command_line(struct command_line *line, struct parser *p, int* exit_code
 				int size;
 				if(fd_open && status_code == CD_CODE){
 					if(read(fd[0], &size, sizeof(int))) {
-						final_directory = malloc(size);
+						final_directory = malloc(size +1);
 					}
 					if(read(fd[0], final_directory, size)) {
+						*(final_directory + size) = '\0';
 						chdir(final_directory);
 					}
 					free(final_directory);
