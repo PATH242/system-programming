@@ -141,7 +141,6 @@ static char* execute_list_of_expressions(const struct expr *e, struct command_li
 						{
 							*exit_code = status_code;
 						}
-						// printf("exit code is now %d because status was%d\n", *exit_code, status_code);
 					}
 				}
 				if(stdin_fd != -1){
@@ -179,11 +178,9 @@ static char* execute_list_of_expressions(const struct expr *e, struct command_li
 			e = e->next;
 		}
 	}
-	// printf("not checked is %d\n", n_non_checked_processes);
 	while(n_non_checked_processes--)
 	{
 		waitpid(non_checked_processes[n_non_checked_processes], NULL, 0);
-		// printf("waited for abandoned process %d\n", non_checked_processes[n_non_checked_processes]);
 	}
 	if(non_checked_processes)
 	{
@@ -281,13 +278,11 @@ execute_command_line(struct command_line *line, struct parser *p, int* exit_code
 				int size;
 				if(fd_open && status_code == CD_CODE){
 					if(read(fd[0], &size, sizeof(int))) {
-						final_directory = malloc(size+1);
+						final_directory = malloc(size);
 					}
 					if(read(fd[0], final_directory, size)) {
 						chdir(final_directory);
 					}
-					// printf("cd was alright all till the end!\n");
-					// printf("I even knew it was %s\n", final_directory);
 					free(final_directory);
 				}
 				else
