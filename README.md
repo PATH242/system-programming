@@ -20,7 +20,7 @@ python3 ./lab1/checker.py -f result.txt
 ```
 
 ### Lab 2
-Simplified version of a command line.
+**Simplified version of a command line.**
 
 Please compile it with
 ```
@@ -36,7 +36,7 @@ Command line also supports:
 ⇥   pipes |
 ⇥   background operations &
 ### Lab 3
-Simple file system that supports:
+**Simple file system** that supports:
 ⇥   *Open via FD.*
 ⇥   *Read via FD.*
 ⇥   *Write via FD.*
@@ -51,9 +51,16 @@ cd lab3 && make && ./a.out
 ```
 
 ### Lab 4
-Thread pool
+**Thread pool**
 
 To run on tests:
 ```
 cd lab4 && make && ./a.out
 ```
+
+### Lab 5
+**Game Lobby chat**
+
+### Acknowledgments
+
+This repository is built on the foundation of [sysprog](https://github.com/Gerold103/sysprog/tree/master) by [Vladislav Shpilevoy].

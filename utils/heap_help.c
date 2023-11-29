@@ -519,16 +519,30 @@ strdup(const char *ptr)
 }
 
 void *
+// malloc(size_t size)
+// {
+// 	heaph_touch();
+// 	++depth;
+// 	void *res = default_malloc(size);
+// 	if (res != NULL)
+// 		alloc_trace_new(res, size);
+// 	--depth;
+// 	return res;
+// }
+
 malloc(size_t size)
 {
-	heaph_touch();
-	++depth;
-	void *res = default_malloc(size);
-	if (res != NULL)
-		alloc_trace_new(res, size);
-	--depth;
-	return res;
+ heaph_touch();
+ ++depth;
+ void *res = default_malloc(size);
+ if (res != NULL) {
+  memset(res, '#', size);
+  alloc_trace_new(res, size);
+ }
+ --depth;
+ return res;
 }
+
 
 void *
 calloc(size_t num, size_t size)
