@@ -2,7 +2,6 @@
 
 #include <stdbool.h>
 #define NEED_TIMED_JOIN
-#define NEED_DETACH
 /**
  * Here you should specify which features do you want to implement via macros:
  * NEED_DETACH and NEED_TIMED_JOIN. If you want to enable detach, do:

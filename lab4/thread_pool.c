@@ -18,7 +18,6 @@ typedef struct thread_task
 	pthread_cond_t finished_cond;
 	pthread_mutex_t in_pool_mutex;
 	struct thread_task* next; 
-	bool is_detached;
 } thread_task;
 
 typedef struct thread_pool
@@ -72,7 +71,7 @@ int thread_pool_delete(struct thread_pool *pool)
 	pthread_mutex_lock(&(pool->active_tasks_mutex));
 	if (pool->tasks_left || pool->active_tasks)
 	{
-		printf("tasks left: %d, active tasks: %d\n",
+		// printf("tasks left: %d, active tasks: %d\n",
 			pool->tasks_left, pool->active_tasks);
 		pthread_mutex_unlock(&(pool->active_tasks_mutex));
 		return TPOOL_ERR_HAS_TASKS;
@@ -105,10 +104,6 @@ void execute_task(thread_task *task)
 	if (task)
 	{
 		task->result = task->function(task->arg);
-	}
-	if(task && task->is_detached)
-	{
-		thread_task_delete(task);
 	}
 }
 
@@ -209,7 +204,7 @@ int thread_task_new(struct thread_task **task, thread_task_f function, void *arg
 	(*task)->arg = arg;
 	(*task)->is_in_pool = false;
 	(*task)->is_finished = false;
-	(*task)->is_detached = false;
+
 	pthread_cond_init(&(*task)->finished_cond, NULL);
 	pthread_mutex_init(&(*task)->finished_mutex, NULL);
 	pthread_mutex_init(&(*task)->in_pool_mutex, NULL);
@@ -222,10 +217,7 @@ int thread_task_join(struct thread_task *task, void **result)
 	{
 		return TPOOL_ERR_TASK_NOT_PUSHED;
 	}
-	if(task->is_detached)
-	{
-		return TPOOL_ERR_INVALID_ARGUMENT;	
-	}
+
 	pthread_mutex_lock(&(task->finished_mutex));
 	while (!task->is_finished)
 	{
