@@ -106,7 +106,6 @@ chat_server_delete(struct chat_server *server)
 
 void delete_peer(struct chat_server* server, int fd)
 {
-	// printf("This client %d is getting deleted\n", fd);
 	short int shift = 0;
 	for(int i = 0; i < server->n_peers; i++)
 	{
@@ -138,38 +137,49 @@ void delete_peer(struct chat_server* server, int fd)
 
 int accept_new_peer(struct chat_server* server)
 {
-	int new_client_fd = accept(server->socket, NULL, NULL);
-	if(new_client_fd < 0)
+	while(1)
 	{
-		return CHAT_ERR_SYS;
-	}
-	// printf("I'm accepting this client: %d\n", new_client_fd);
-	struct chat_peer* new_peer = malloc(sizeof(struct chat_peer));
-	// bonus todo: get name
-	new_peer->name = NULL;
-	new_peer->socket = new_client_fd;
-	new_peer->output_buf_size = 0;
-	new_peer->output_buf_capacity = 0;
-	new_peer->output_buf = NULL;
+		int new_client_fd = accept(server->socket, NULL, NULL);
+		if (new_client_fd == -1) {
+			/* We have processed all incoming connections. */
+			if ((errno == EAGAIN) || (errno == EWOULDBLOCK)) {
+				break;
+			}
+			else {
+				perror ("Error accepting client at server");
+				break;
+			}
+		}
+		if(new_client_fd < 0)
+		{
+			return CHAT_ERR_SYS;
+		}
+		struct chat_peer* new_peer = malloc(sizeof(struct chat_peer));
+		// bonus todo: get name
+		new_peer->name = NULL;
+		new_peer->socket = new_client_fd;
+		new_peer->output_buf_size = 0;
+		new_peer->output_buf_capacity = 0;
+		new_peer->output_buf = NULL;
 
-	server->peers = realloc(server->peers, (server->n_peers + 1) * sizeof(struct chat_peer*));
-	server->peers[server->n_peers] = new_peer;
-	server->n_peers += 1;
+		server->peers = realloc(server->peers, (server->n_peers + 1) * sizeof(struct chat_peer*));
+		server->peers[server->n_peers] = new_peer;
+		server->n_peers += 1;
 
-	struct epoll_event event;
-	event.events = (EPOLLIN | EPOLLET);
-	event.data.fd = new_client_fd;
-	// Make the new connection non blocking
-	int old_flags = fcntl(new_client_fd, F_GETFL);
-	fcntl(new_client_fd, F_SETFL, old_flags | O_NONBLOCK);
- 	if(epoll_ctl(server->epoll_fd, EPOLL_CTL_ADD, new_client_fd, &event) < 0)
-	{
-		epoll_ctl(server->epoll_fd, EPOLL_CTL_DEL, new_client_fd, NULL);
-		close(new_client_fd);
-		free(new_peer);
-		return CHAT_ERR_SYS;
+		struct epoll_event event;
+		event.events = (EPOLLIN | EPOLLET);
+		event.data.fd = new_client_fd;
+		// Make the new connection non blocking
+		int old_flags = fcntl(new_client_fd, F_GETFL);
+		fcntl(new_client_fd, F_SETFL, old_flags | O_NONBLOCK);
+		if(epoll_ctl(server->epoll_fd, EPOLL_CTL_ADD, new_client_fd, &event) < 0)
+		{
+			epoll_ctl(server->epoll_fd, EPOLL_CTL_DEL, new_client_fd, NULL);
+			close(new_client_fd);
+			free(new_peer);
+			return CHAT_ERR_SYS;
+		}
 	}
-	// printf("Now I have %d peers\n", server->n_peers);
 	return 0;
 }
 
@@ -210,23 +220,32 @@ chat_server_listen(struct chat_server *server, uint16_t port)
         perror("Error creating server socket");
         return CHAT_ERR_SYS;
     }
-
-    if (bind(server->socket, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        perror("Error binding server socket");
+    int socket_options = 1;
+    if (setsockopt(server->socket, SOL_SOCKET, SO_REUSEADDR, &socket_options, sizeof(int)) < 0)
+    {
+        perror("Error setting server socket options");
+        close(server->socket);
         return CHAT_ERR_SYS;
     }
-	if(listen(server->socket, 16) < 0)
+	int old_flags = fcntl(server->socket, F_GETFL);
+	fcntl(server->socket, F_SETFL, old_flags | O_NONBLOCK);
+    if (bind(server->socket, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        perror("Error binding server socket");
+		if (errno == EADDRINUSE) {
+            return CHAT_ERR_PORT_BUSY;
+        }
+        return CHAT_ERR_SYS;
+    }
+	if(listen(server->socket, SOMAXCONN) < 0)
 	{
 		perror("Error listening on server");
 		close(server->socket);
 		return CHAT_ERR_SYS;
 	}
 	
-	int old_flags = fcntl(server->socket, F_GETFL);
-	fcntl(server->socket, F_SETFL, old_flags | O_NONBLOCK);
-	int ep = epoll_create(1);
-	server->epoll_fd = ep;
-	if (ep < 0)
+	int epoll_fd = epoll_create(1);
+	server->epoll_fd = epoll_fd;
+	if (epoll_fd < 0)
 	{
 		perror("Error creating epoll\n");
 		close(server->socket);
@@ -234,11 +253,11 @@ chat_server_listen(struct chat_server *server, uint16_t port)
 	}
 	server->epoll_trigger.events = (EPOLLIN | EPOLLET);
 	server->epoll_trigger.data.fd = server->socket;
-	if(epoll_ctl(ep, EPOLL_CTL_ADD, server->socket, &server->epoll_trigger) < 0)
+	if(epoll_ctl(epoll_fd, EPOLL_CTL_ADD, server->socket, &server->epoll_trigger) < 0)
     {
 		perror("Error adding server socket to epoll");
         close(server->socket);
-		close(ep);
+		close(epoll_fd);
         return CHAT_ERR_SYS;
     }
     return 0;
@@ -362,7 +381,6 @@ int read_message_from_client(struct chat_server* server, struct epoll_event* eve
 		{
 			if(server->input_buf[i] == '\n')
 			{
-				// printf("received one message of size %d\n", i - start + 1);
 				struct chat_message* new_message = malloc(sizeof(struct chat_message));
 				char* message_content = calloc(i - start + 1, sizeof(char));
 				message_content = memcpy(message_content, server->input_buf+start, (i - start +1));
@@ -399,11 +417,10 @@ chat_server_update(struct chat_server *server, double timeout)
 	int max_events = server->n_peers + 1;
 	struct epoll_event *events;
 	events = calloc(max_events, sizeof(struct epoll_event));
-	int rc = epoll_wait(server->epoll_fd, events, max_events, (int)timeout * 1000);
+	int rc = epoll_wait(server->epoll_fd, events, max_events, timeout * 1000);
 	if(rc == 0)
 	{
 		free(events);
-		// printf("timeout mbe or just no events?\n");
 		return CHAT_ERR_TIMEOUT;
 	}
 	else if(rc < 0)

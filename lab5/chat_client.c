@@ -127,6 +127,7 @@ chat_client_connect(struct chat_client *client, const char *addr)
 		if(rc < 0)
 		{
 			close(client->socket);
+			client->socket = -1;
 			continue;
 		}
 		break;
@@ -241,7 +242,6 @@ int chat_client_receive_buf(struct chat_client* client)
 		{
 			if(input_buf[i] == '\n')
 			{
-				// printf("received one message of size %d\n", i - start + 1);
 				struct chat_message* new_message = malloc(sizeof(struct chat_message));
 				char* message_content = calloc(i - start + 1, sizeof(char));
 				message_content = memcpy(message_content, input_buf+start, (i - start +1));
@@ -256,7 +256,6 @@ int chat_client_receive_buf(struct chat_client* client)
 		}
 	}
 	free(input_buf);
-	// printf("received smth in client here\n");
 	return n_received;
 }
 
@@ -379,7 +378,6 @@ chat_client_feed(struct chat_client *client, const char *msg, uint32_t msg_size)
 		if(client->output_buf[i] == '\n')
 		{
 			int sz = i - start + 1;
-			// printf("made one message of size %d\n", sz);
 			struct chat_message* new_message = malloc(sizeof(struct chat_message));
 			char* message_content = calloc(sz, sizeof(char));
 			message_content = memcpy(message_content, client->output_buf+start, sz);
