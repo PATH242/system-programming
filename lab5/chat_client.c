@@ -33,6 +33,7 @@ struct chat_client {
 	/* PUT HERE OTHER MEMBERS */
 	char* name;
 	struct pollfd* poll_trigger;
+	int is_name_sent;
 };
 
 struct chat_client *
@@ -55,6 +56,7 @@ chat_client_new(const char *name)
 	client->output_buf_capacity = 2;
 	client->name = strdup(name);
 	client->poll_trigger = calloc(1, sizeof(struct pollfd));
+	client->is_name_sent = 0;
 	return client;
 }
 
@@ -167,6 +169,33 @@ chat_client_pop_next(struct chat_client *client)
 	return NULL;
 }
 
+int send_client_name(struct chat_client* client)
+{
+	// Send name to server.
+	int sz = strlen(client->name);
+	int rc = 0, n_sent = 0;
+	char* msg = calloc(sz + 1, sizeof(char));
+	memcpy(msg, client->name, sz);
+	msg[sz] = '\n';
+	sz ++;
+	while(1)
+	{
+		rc = send(client->socket, msg+ n_sent, sz - n_sent, 0);
+		if(rc < 0)
+		{
+			break;
+		}
+		n_sent += rc;
+		if(n_sent == sz)
+		{
+			break;
+		}
+	}
+	client->is_name_sent = 1;
+	free(msg);
+	return 0;
+}
+
 int chat_client_send_buf(struct chat_client* client)
 {
 	int n_sent = 0;
@@ -238,19 +267,39 @@ int chat_client_receive_buf(struct chat_client* client)
 	else
 	{
 		int start = 0;
+		int is_first = 1;
 		for(int i = 0; i < n_received; i++)
 		{
+			// first time it's author, second it's message.
 			if(input_buf[i] == '\n')
 			{
-				struct chat_message* new_message = malloc(sizeof(struct chat_message));
+				struct chat_message* new_message;
+				if(is_first)
+				{
+					new_message = malloc(sizeof(struct chat_message));
+					new_message->data = NULL;
+					client->received_messages = realloc(client->received_messages, (client->n_received_messages + 1) * sizeof(struct chat_message*));
+					client->received_messages[client->n_received_messages] = new_message;
+					client->n_received_messages += 1;
+				}
+				else
+				{
+					new_message = client->received_messages[client->n_received_messages-1];
+				}
 				char* message_content = calloc(i - start + 1, sizeof(char));
 				message_content = memcpy(message_content, input_buf+start, (i - start +1));
 				// add terminating character instead of '\n'
 				message_content[i-start] = '\0';
-				new_message->data = message_content;
-				client->received_messages = realloc(client->received_messages, (client->n_received_messages + 1) * sizeof(struct chat_message*));
-				client->received_messages[client->n_received_messages] = new_message;
-				client->n_received_messages += 1;
+				if(is_first)
+				{
+					new_message->author = message_content;
+					is_first = 0;
+				}
+				else
+				{
+					new_message->data = message_content;
+					is_first = 1;
+				}
 				start = i + 1;
 			}
 		}
@@ -285,6 +334,10 @@ chat_client_update(struct chat_client *client, double timeout)
 	if(client->poll_trigger->revents & POLLOUT)
 	{
 		// printf("got to send buf\n");
+		if(!client->is_name_sent)
+		{
+			send_client_name(client);
+		}
 		chat_client_send_buf(client);
 	}
 	if(client->poll_trigger->revents & POLLIN)
@@ -369,7 +422,6 @@ chat_client_feed(struct chat_client *client, const char *msg, uint32_t msg_size)
 		client->output_buf_capacity = target_size;
 		client->output_buf = realloc(client->output_buf, target_size * sizeof(char));
 	}
-	// printf("feedinggg\n");
 	memcpy(client->output_buf+client->output_buf_size,
 	 	msg, msg_size);
 	int start = 0;
@@ -385,6 +437,7 @@ chat_client_feed(struct chat_client *client, const char *msg, uint32_t msg_size)
 			// add terminating char instead of '\n', will be reverted above.
 			message_content[sz - 1] = '\0';
 			new_message->data = message_content;
+			new_message->author = NULL;
 			client->messages_to_be_sent = realloc(
 							client->messages_to_be_sent, (client->n_messages_to_be_sent + 1) * sizeof(struct chat_message*));
 			client->messages_to_be_sent[client->n_messages_to_be_sent] = new_message;
@@ -403,6 +456,5 @@ chat_client_feed(struct chat_client *client, const char *msg, uint32_t msg_size)
 		free(client->output_buf);
 		client->output_buf = new_buf;
 	}
-	// printf("I fed it %uld\n", msg_size);
 	return 0;
 }

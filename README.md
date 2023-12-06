@@ -60,7 +60,12 @@ cd lab4 && make && ./a.out
 
 ### Lab 5
 **Game Lobby chat**
-
+supports
+⇥   *Multiple clients*
+⇥   *Long messages*
+⇥   *Incomplete messages' buffering*
+⇥   *Sending messages in batches*
+⇥   *Client sends its name once and it is attached to all its messages*
 ### Acknowledgments
 
-This repository is built on the foundation of [sysprog](https://github.com/Gerold103/sysprog/tree/master) by [Vladislav Shpilevoy].
+This repository is built on the foundation of [sysprog](https://github.com/Gerold103/sysprog/tree/master) by [Vladislav Shpilevoy]. It is a systems programming course repo and tasks' descriptions and solutions' templates are authored by him.

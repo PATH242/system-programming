@@ -40,6 +40,7 @@ struct chat_server {
 	struct chat_message** received_messages;
 	/** Input buffer. */
 	char* input_buf;
+	int input_buf_complete_messages_n;
 	int input_buf_size;
 	int input_buf_capacity;
 
@@ -63,6 +64,7 @@ chat_server_new(void)
 	server->input_buf_capacity = 0;
 	server->n_received_messages = 0;
 	server->received_messages = NULL;
+	server->input_buf_complete_messages_n = 0;
 	return server;
 }
 
@@ -95,7 +97,7 @@ chat_server_delete(struct chat_server *server)
 	}
 	for(int i = 0; i < server->n_received_messages; i++)
 	{
-		free(server->received_messages[i]);
+		chat_message_delete(server->received_messages[i]);
 	}
 	if(server->received_messages != NULL)
 	{
@@ -155,7 +157,6 @@ int accept_new_peer(struct chat_server* server)
 			return CHAT_ERR_SYS;
 		}
 		struct chat_peer* new_peer = malloc(sizeof(struct chat_peer));
-		// bonus todo: get name
 		new_peer->name = NULL;
 		new_peer->socket = new_client_fd;
 		new_peer->output_buf_size = 0;
@@ -314,9 +315,53 @@ int send_message_to_client(struct chat_server* server, int client_socket)
 	return 0;
 }
 
+void concatenate_authors_and_messages(struct chat_server* server)
+{
+	if (!server->input_buf_complete_messages_n)
+	{
+		return;
+	}
+	/*Not the most effecient way but I wanted to keep the
+	bonus functionality somewhat separate from main functioniality.*/
+	char* result_buf = calloc(BUF_SIZE, sizeof(char));
+	int result_buf_size = 0;
+	int result_capacity = BUF_SIZE;
+	int offset = server->n_received_messages
+			- server->input_buf_complete_messages_n;
+	for (int i = 0; i < server->input_buf_complete_messages_n; i++)
+	{
+		// Concatenate author and message
+		int author_len = strlen(server->received_messages[i + offset]->author);
+		int data_len = strlen(server->received_messages[i + offset]->data);
+		if (result_buf_size + author_len + data_len + 2 > result_capacity)
+		{
+			result_capacity = result_buf_size + author_len + data_len + 2;
+			char* new_buf = calloc(result_capacity, sizeof(char));
+			memcpy(new_buf, result_buf, result_buf_size);
+			free(result_buf);
+			result_buf = new_buf;
+		}
+
+		memcpy(result_buf + result_buf_size, server->received_messages[i + offset]->author, author_len);
+		result_buf_size += author_len;
+		result_buf[result_buf_size++] = '\n';
+
+		memcpy(result_buf + result_buf_size, server->received_messages[i + offset]->data, data_len);
+		result_buf_size += data_len;
+		result_buf[result_buf_size++] = '\n';
+	}
+
+	free(server->input_buf);
+	server->input_buf = result_buf;
+	server->input_buf_size = result_buf_size;
+	server->input_buf_capacity = result_capacity;
+	server->input_buf_complete_messages_n = 0; 
+}
+
 int send_message_to_clients(struct chat_server* server, struct epoll_event* event)
 {
 	// printf("tryna send messages to all clients and all for this client: %d\n", event->data.fd);
+	concatenate_authors_and_messages(server);
 	for(int i = 0; i < server->n_peers; i++)
 	{
 		int client_socket = server->peers[i]->socket;
@@ -355,6 +400,7 @@ int send_message_to_clients(struct chat_server* server, struct epoll_event* even
 int read_message_from_client(struct chat_server* server, struct epoll_event* event)
 {
 	int client_fd = event->data.fd;
+	struct chat_peer* client = find_peer(server, client_fd);
 	int rc = 0;
 	int total_received = 0;
 	server->input_buf = calloc(BUF_SIZE, sizeof(char));
@@ -381,12 +427,32 @@ int read_message_from_client(struct chat_server* server, struct epoll_event* eve
 		{
 			if(server->input_buf[i] == '\n')
 			{
+				// Only first time client sends a message, get client name.
+				if(client->name == NULL)
+				{
+					client->name = calloc(i - start + 1, sizeof(char));
+					client->name = memcpy(client->name, server->input_buf, i + 1);
+					// add terminating character instead of '\n'
+					client->name[i] = '\0';
+					// remove name from buf to not be added to other clients.
+					char* new_buf = calloc(server->input_buf_capacity - i, sizeof(char));
+					memcpy(new_buf, server->input_buf+i+1, server->input_buf_size -i-1);
+					server->input_buf_capacity -= i;
+					server->input_buf_size -= (i+1);
+					start = 0;
+					i = -1;
+					free(server->input_buf);
+					server->input_buf = new_buf;
+					continue;
+				}
 				struct chat_message* new_message = malloc(sizeof(struct chat_message));
 				char* message_content = calloc(i - start + 1, sizeof(char));
 				message_content = memcpy(message_content, server->input_buf+start, (i - start +1));
 				// add terminating character instead of '\n'
 				message_content[i-start] = '\0';
+				server->input_buf_complete_messages_n ++;
 				new_message->data = message_content;
+				new_message->author = strdup(client->name);
 				server->received_messages = realloc(
 								server->received_messages, (server->n_received_messages + 1) * sizeof(struct chat_message*));
 				server->received_messages[server->n_received_messages] = new_message;
@@ -413,7 +479,6 @@ chat_server_update(struct chat_server *server, double timeout)
 	{
 		timeout = 0;
 	}
-	// printf("tryna update server\n");
 	int max_events = server->n_peers + 1;
 	struct epoll_event *events;
 	events = calloc(max_events, sizeof(struct epoll_event));
@@ -429,7 +494,7 @@ chat_server_update(struct chat_server *server, double timeout)
 		free(events);
 		return CHAT_ERR_SYS;
 	}
-	// printf("And I allegedly received %d events\n", rc);
+	// printf("I allegedly received %d events\n", rc);
 	for(int i = 0; i < max_events; i++)
 	{
 		if(events[i].data.fd == server->socket)
