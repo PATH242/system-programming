@@ -62,7 +62,7 @@ main(int argc, char **argv)
 		/* Flush all the pending messages to the standard output. */
 		struct chat_message *msg;
 		while ((msg = chat_server_pop_next(serv)) != NULL) {
-#if NEED_AUTHOR
+#ifdef NEED_AUTHOR
 			printf("%s: %s\n", msg->author, msg->data);
 #else
 			printf("%s\n", msg->data);
