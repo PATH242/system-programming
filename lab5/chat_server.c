@@ -505,6 +505,10 @@ chat_server_update(struct chat_server *server, double timeout)
 		timeout = 0;
 	}
 	int max_events = server->n_peers + 1;
+	if(server->n_peers > 1000)
+	{
+		max_events = 1000;
+	}
 	struct epoll_event *events;
 	events = calloc(max_events, sizeof(struct epoll_event));
 	int rc = epoll_wait(server->epoll_fd, events, max_events, timeout * 1000);
