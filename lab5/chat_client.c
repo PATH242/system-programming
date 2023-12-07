@@ -34,6 +34,7 @@ struct chat_client {
 	char* name;
 	struct pollfd* poll_trigger;
 	int is_name_sent;
+	int some_name_sent;
 };
 
 struct chat_client *
@@ -57,6 +58,7 @@ chat_client_new(const char *name)
 	client->name = strdup(name);
 	client->poll_trigger = calloc(1, sizeof(struct pollfd));
 	client->is_name_sent = 0;
+	client->some_name_sent = 0;
 	return client;
 }
 
@@ -144,6 +146,9 @@ chat_client_connect(struct chat_client *client, const char *addr)
 		perror("port busy? or like connection failed\n");
 		return CHAT_ERR_PORT_BUSY;
 	}
+	// Make the new connection non blocking
+	int old_flags = fcntl(client->socket, F_GETFL);
+	fcntl(client->socket, F_SETFL, old_flags | O_NONBLOCK);
 	client->poll_trigger->fd = client->socket;
 	client->poll_trigger->events = POLLIN;
 	freeaddrinfo(addr_info);
@@ -173,7 +178,7 @@ int send_client_name(struct chat_client* client)
 {
 	// Send name to server.
 	int sz = strlen(client->name);
-	int rc = 0, n_sent = 0;
+	int rc = 0, n_sent = client->some_name_sent;
 	char* msg = calloc(sz + 1, sizeof(char));
 	memcpy(msg, client->name, sz);
 	msg[sz] = '\n';
@@ -191,29 +196,44 @@ int send_client_name(struct chat_client* client)
 			break;
 		}
 	}
-	client->is_name_sent = 1;
 	free(msg);
+	if(errno == EAGAIN || errno == EWOULDBLOCK)
+	{
+		client->some_name_sent = n_sent;
+		return 0;
+	}
+	client->is_name_sent = 1;
 	return 0;
 }
 
 int chat_client_send_buf(struct chat_client* client)
 {
-	int n_sent = 0;
+	int rc = 0;
 	int total_sent = 0;
 	if(client->n_messages_to_be_sent)
 	{
+		int msg_sent = 0;
 		char* msg = client->messages_to_be_sent[0]->data;
 		int sz = strlen(msg) + 1;
 		msg[sz-1] = '\n';
 		while(sz)
 		{
-			n_sent = send(client->socket, msg+n_sent, sz, 0);
-			if(n_sent < 0)
+			rc = send(client->socket, msg+ msg_sent, sz, 0);
+			if(rc < 0)
 			{
-				return CHAT_ERR_SYS;
+				if(errno == EWOULDBLOCK || errno == EAGAIN)
+				{
+					// Calculate the number of characters to keep
+					size_t remaining = sz - msg_sent + 1; // +1 to include the null terminator
+					memmove(client->messages_to_be_sent[0]->data,
+							client->messages_to_be_sent[0]->data + msg_sent, remaining);
+					client->messages_to_be_sent[0]->data
+							[client->output_buf_size - msg_sent] = '\0';
+				}
+				return 0;
 			}
 			else
-			if(n_sent <= 0)
+			if(rc == 0)
 			{
 				close(client->socket);
 				client->socket = -1;
@@ -221,8 +241,9 @@ int chat_client_send_buf(struct chat_client* client)
 			}
 			else
 			{
-				sz -= n_sent;
-				total_sent += n_sent;
+				sz -= rc;
+				total_sent += rc;
+				msg_sent += rc;
 			}
 		}
 		chat_message_delete(client->messages_to_be_sent[0]);

@@ -103,6 +103,10 @@ chat_server_delete(struct chat_server *server)
 	{
 		free(server->received_messages);
 	}
+	if(server->epoll_fd >= 0)
+	{
+		close(server->epoll_fd);
+	}
 	free(server);
 }
 
@@ -295,15 +299,36 @@ int send_message_to_client(struct chat_server* server, int client_socket)
 		return 0;
 	}
 	int pointer = 0;
+	int rc = 0;
 	while(pointer < client->output_buf_size)
 	{
-		pointer += 
+		rc = 
 			send(client_socket, client->output_buf + pointer,
 					client->output_buf_size - pointer, 0);
+		if(rc < 0)
+		{
+			if(errno == EWOULDBLOCK || errno == EAGAIN)
+			{
+				// Calculate the number of characters to keep
+        		size_t remaining = client->output_buf_size - pointer + 1; // +1 to include the null terminator
+		        memmove(client->output_buf, client->output_buf + pointer, remaining);
+				client->output_buf[client->output_buf_size - pointer] = '\0';
+				return pointer;
+			}
+		}
+		else 
+		if(rc == 0)
+		{
+			break;
+		}
+		else
+		{
+			pointer += rc;
+		}
 	}
 	server->epoll_trigger.events = (EPOLLET | EPOLLIN);
 	server->epoll_trigger.data.fd = client_socket;
-	int rc = epoll_ctl(server->epoll_fd, EPOLL_CTL_MOD, client_socket, &server->epoll_trigger);
+	rc = epoll_ctl(server->epoll_fd, EPOLL_CTL_MOD, client_socket, &server->epoll_trigger);
 	client->output_buf_size = 0;
 	client->output_buf_capacity = 0;
 	free(client->output_buf);
