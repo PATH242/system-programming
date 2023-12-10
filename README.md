@@ -1,12 +1,11 @@
 # Systems Programming
-⇥   [Sorting on multiple files](#lab-1)
-⇥   [Simple terminal](#lab-2)
-⇥   [File system](#lab-3)
-⇥   [Thread pool](#lab-4)
+⇥   [Sorting on multiple files](#lab-1)\
+⇥   [Simple terminal](#lab-2)\
+⇥   [File system](#lab-3)\
+⇥   [Thread pool](#lab-4)\
 ⇥   [Game lobby chat](#lab-5)
 ### Lab 1
-C program that takes file names with numbers, sorts each of them individually with quick sort, and then uses merge sort to merge them. The result will always be stored in results.txt.
-There's a checker script in ./lab1 that can be used to check numbers have been sorted correctly.
+C program that takes file names that contain numbers, and sorts them.
 
 Please compile it with:
 ```
@@ -22,8 +21,11 @@ To test results, please use checker.py.
 python3 ./lab1/checker.py -f result.txt
 ```
 
+⇥ Sorts numbers in each file with quick sort\
+⇥ Uses merge sort to join files\
+⇥ Result are stored in results.txt
 ### Lab 2
-**Simplified version of a command line.**
+**Simple command line.**
 
 Please compile it with
 ```
@@ -33,14 +35,16 @@ and run it using
 ```
 ./a.out 
 ```
-and start using it as a terminal. If you need to exit, type exit.\
+and start using it as a terminal.\
+If you need to exit, type exit.\
+\
 Command line also supports: \
 ⇥   *and, or operations: &&, ||* \
 ⇥   *pipes |* \
 ⇥   *background operations &*
 ### Lab 3
 **Simple file system**\
-supports:
+supports:\
 ⇥   *Open via FD.* \
 ⇥   *Read via FD.* \
 ⇥   *Write via FD.* \
@@ -79,7 +83,7 @@ To run server and client independently, use
 ./server
 ./client
 ```
-supports
+supports\
 ⇥   *Multiple clients* \
 ⇥   *Long messages*\
 ⇥   *Incomplete messages' buffering*\
