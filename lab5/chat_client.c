@@ -244,14 +244,12 @@ int chat_client_send_buf(struct chat_client* client)
 							client->messages_to_be_sent[0]->data + msg_sent, remaining);
 					client->messages_to_be_sent[0]->data[sz] = '\0';
 				}
-				return 0;
+				return CHAT_ERR_SYS;
 			}
 			else
 			if(rc == 0)
 			{
-				close(client->socket);
-				client->socket = -1;
-				return 0;
+				return CHAT_ERR_SYS;
 			}
 			else
 			{

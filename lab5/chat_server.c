@@ -315,6 +315,7 @@ int send_message_to_client(struct chat_server* server, int client_socket)
 				client->output_buf[client->output_buf_size - pointer] = '\0';
 				return pointer;
 			}
+			break;
 		}
 		else 
 		if(rc == 0)
