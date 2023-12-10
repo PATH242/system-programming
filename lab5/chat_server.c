@@ -173,7 +173,7 @@ int accept_new_peer(struct chat_server* server)
 
 		struct epoll_event event;
 		event.events = (EPOLLIN | EPOLLET);
-		event.data.fd = new_client_fd;
+		event.data.ptr = new_peer;
 		// Make the new connection non blocking
 		int old_flags = fcntl(new_client_fd, F_GETFL);
 		fcntl(new_client_fd, F_SETFL, old_flags | O_NONBLOCK);
@@ -186,18 +186,6 @@ int accept_new_peer(struct chat_server* server)
 		}
 	}
 	return 0;
-}
-
-struct chat_peer* find_peer(struct chat_server* server, int client_fd)
-{
-	for(int i = 0; i < server->n_peers; i++)
-	{
-		if(server->peers[i]->socket == client_fd)
-		{
-			return server->peers[i];
-		}
-	}
-	return NULL;
 }
 
 /*
@@ -287,9 +275,8 @@ chat_server_pop_next(struct chat_server *server)
 	return NULL;
 }
 
-int send_message_to_client(struct chat_server* server, int client_socket)
+int send_message_to_client(struct chat_server* server, int client_socket, struct chat_peer* client)
 {
-	struct chat_peer* client = find_peer(server, client_socket);
 	if(client == NULL)
 	{
 		return -1;
@@ -328,7 +315,7 @@ int send_message_to_client(struct chat_server* server, int client_socket)
 		}
 	}
 	server->epoll_trigger.events = (EPOLLET | EPOLLIN);
-	server->epoll_trigger.data.fd = client_socket;
+	server->epoll_trigger.data.ptr = client;
 	rc = epoll_ctl(server->epoll_fd, EPOLL_CTL_MOD, client_socket, &server->epoll_trigger);
 	client->output_buf_size = 0;
 	client->output_buf_capacity = 0;
@@ -386,7 +373,6 @@ void concatenate_authors_and_messages(struct chat_server* server)
 
 int send_message_to_clients(struct chat_server* server, struct epoll_event* event)
 {
-	// printf("tryna send messages to all clients and all for this client: %d\n", event->data.fd);
 	if(!server->input_buf_complete_messages_n)
 	{
 		return 0;
@@ -395,11 +381,12 @@ int send_message_to_clients(struct chat_server* server, struct epoll_event* even
 	for(int i = 0; i < server->n_peers; i++)
 	{
 		int client_socket = server->peers[i]->socket;
-		if(client_socket == event->data.fd)
+		struct chat_peer* client = event->data.ptr;
+		if(client_socket == client->socket)
 		{
 			continue;
 		}
-		struct chat_peer* client = find_peer(server, client_socket);
+		client = server->peers[i];
 		int target_size = client->output_buf_size + server->input_buf_size;
 		char* new_buf = calloc(target_size, sizeof(char));
 		memcpy(new_buf, client->output_buf, client->output_buf_size);
@@ -410,7 +397,7 @@ int send_message_to_clients(struct chat_server* server, struct epoll_event* even
 		client->output_buf_capacity = target_size;
 		// signal to all sockets that they should write
 		server->epoll_trigger.events = (EPOLLOUT | EPOLLIN | EPOLLET);
-		server->epoll_trigger.data.fd = client_socket;
+		server->epoll_trigger.data.ptr = server->peers[i];
 		int rc = epoll_ctl(server->epoll_fd, EPOLL_CTL_MOD, client_socket, &server->epoll_trigger);
 		if(rc < 0)
 		{
@@ -430,8 +417,8 @@ int send_message_to_clients(struct chat_server* server, struct epoll_event* even
 */
 int read_message_from_client(struct chat_server* server, struct epoll_event* event)
 {
-	int client_fd = event->data.fd;
-	struct chat_peer* client = find_peer(server, client_fd);
+	struct chat_peer* client = event->data.ptr;
+	int client_fd = client->socket;
 	int rc = 0;
 	int total_received = 0;
 	if(server->input_buf_capacity == 0)
@@ -536,23 +523,25 @@ chat_server_update(struct chat_server *server, double timeout)
 			accept_new_peer(server);
 			continue;
 		}
+		struct chat_peer* client = events[i].data.ptr;
+		int client_socket = client->socket;
 		if((events[i].events & EPOLLIN))
 		{
 			if(read_message_from_client(server, &events[i]) == 0)
 			{
-				rc = epoll_ctl(server->epoll_fd, EPOLL_CTL_DEL, events[i].data.fd, NULL);
+				rc = epoll_ctl(server->epoll_fd, EPOLL_CTL_DEL, client_socket, NULL);
 				if(rc < 0)
 				{
 					return CHAT_ERR_SYS;
 				}
-				close(events[i].data.fd);
-				delete_peer(server, events->data.fd);
+				close(client_socket);
+				delete_peer(server, client_socket);
 			}
 			send_message_to_clients(server, &events[i]);
 		}
 		if((events[i].events & EPOLLOUT))
 		{
-			send_message_to_client(server, events[i].data.fd);
+			send_message_to_client(server, client_socket, client);
 		}
 	}
 	return 0;
