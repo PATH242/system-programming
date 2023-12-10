@@ -20,13 +20,21 @@
 struct chat_client {
 	/** Socket connected to the server. */
 	int socket;
+	/** Input buffer. */
+	/*for incomplete messages*/
+	char* input_buf;
+	int input_buf_size;
+	int input_buf_capacity;
 	/** Array of received messages. */
+	/*for complete messages*/
 	int n_received_messages;
 	struct chat_message** received_messages;
 	/** Array of to be sent messages. */
+	/*for complete messages*/
 	int n_messages_to_be_sent;
 	struct chat_message** messages_to_be_sent;
 	/** Output buffer. */
+	/*for incomplete messages*/
 	char* output_buf;
 	int output_buf_size;
 	int output_buf_capacity;
@@ -48,6 +56,9 @@ chat_client_new(const char *name)
         abort();
     }
 	client->socket = -1;
+	client->input_buf = NULL;
+	client->input_buf_capacity = 0;
+	client->input_buf_size = 0;
 	client->n_received_messages = 0;
 	client->received_messages = NULL;
 	client->n_messages_to_be_sent = 0;
@@ -86,6 +97,10 @@ chat_client_delete(struct chat_client *client)
 	if(client->output_buf != NULL)
 	{
 		free(client->output_buf);
+	}
+	if(client->input_buf_capacity)
+	{
+		free(client->input_buf);
 	}
 	free(client->poll_trigger);
 	free(client->name);
@@ -197,7 +212,7 @@ int send_client_name(struct chat_client* client)
 		}
 	}
 	free(msg);
-	if(errno == EAGAIN || errno == EWOULDBLOCK)
+	if( (errno == EAGAIN || errno == EWOULDBLOCK) && n_sent < sz)
 	{
 		client->some_name_sent = n_sent;
 		return 0;
@@ -224,11 +239,10 @@ int chat_client_send_buf(struct chat_client* client)
 				if(errno == EWOULDBLOCK || errno == EAGAIN)
 				{
 					// Calculate the number of characters to keep
-					size_t remaining = sz - msg_sent + 1; // +1 to include the null terminator
+					int remaining = sz + 1; // +1 to include the null terminator
 					memmove(client->messages_to_be_sent[0]->data,
 							client->messages_to_be_sent[0]->data + msg_sent, remaining);
-					client->messages_to_be_sent[0]->data
-							[client->output_buf_size - msg_sent] = '\0';
+					client->messages_to_be_sent[0]->data[sz] = '\0';
 				}
 				return 0;
 			}
@@ -266,33 +280,37 @@ int chat_client_send_buf(struct chat_client* client)
 int chat_client_receive_buf(struct chat_client* client)
 {
 	int rc = 0, n_received = 0;
-	char* input_buf = calloc(BUF_SIZE, sizeof(char));
-	int input_buf_capacity = BUF_SIZE;
+	if(client->input_buf_capacity == 0)
+	{
+		client->input_buf = calloc(BUF_SIZE, sizeof(char));
+		client->input_buf_capacity = BUF_SIZE;
+	}
 	do{
+		client->input_buf_size += rc;
 		n_received += rc;
-		if(n_received == input_buf_capacity)
+		if(client->input_buf_size == client->input_buf_capacity)
 		{
-			input_buf_capacity *= 2;
-			char* new_buf = calloc(input_buf_capacity, sizeof(char));
-			memcpy(new_buf, input_buf, n_received);
-			free(input_buf);
-			input_buf = new_buf;
+			client->input_buf_capacity *= 2;
+			char* new_buf = calloc(client->input_buf_capacity, sizeof(char));
+			memcpy(new_buf, client->input_buf, client->input_buf_size);
+			free(client->input_buf);
+			client->input_buf = new_buf;
 		}
-		rc = recv(client->socket, input_buf + n_received, input_buf_capacity - n_received, MSG_DONTWAIT);
+		rc = recv(client->socket, client->input_buf + client->input_buf_size,
+				client->input_buf_capacity - client->input_buf_size, MSG_DONTWAIT);
 	}while(rc > 0);
 	if(n_received == 0)
 	{
-		free(input_buf);
 		return 0;
 	}
 	else
 	{
 		int start = 0;
 		int is_first = 1;
-		for(int i = 0; i < n_received; i++)
+		for(int i = 0; i < client->input_buf_size; i++)
 		{
 			// first time it's author, second it's message.
-			if(input_buf[i] == '\n')
+			if(client->input_buf[i] == '\n')
 			{
 				struct chat_message* new_message;
 				if(is_first)
@@ -308,7 +326,7 @@ int chat_client_receive_buf(struct chat_client* client)
 					new_message = client->received_messages[client->n_received_messages-1];
 				}
 				char* message_content = calloc(i - start + 1, sizeof(char));
-				message_content = memcpy(message_content, input_buf+start, (i - start +1));
+				message_content = memcpy(message_content, client->input_buf+start, (i - start +1));
 				// add terminating character instead of '\n'
 				message_content[i-start] = '\0';
 				if(is_first)
@@ -324,8 +342,20 @@ int chat_client_receive_buf(struct chat_client* client)
 				start = i + 1;
 			}
 		}
+		if(start == client->input_buf_size)
+		{
+			free(client->input_buf);
+			client->input_buf = NULL;
+			client->input_buf_capacity = 0;
+			client->input_buf_size = 0;
+		}
+		else
+		{
+			int remaining = client->input_buf_size - start;
+			memmove(client->input_buf, client->input_buf + start, remaining);
+			client->input_buf_size -= start;
+		}
 	}
-	free(input_buf);
 	return n_received;
 }
 
@@ -359,7 +389,10 @@ chat_client_update(struct chat_client *client, double timeout)
 		{
 			send_client_name(client);
 		}
-		chat_client_send_buf(client);
+		if(client->is_name_sent)
+		{
+			chat_client_send_buf(client);
+		}
 	}
 	if(client->poll_trigger->revents & POLLIN)
 	{

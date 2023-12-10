@@ -386,6 +386,10 @@ void concatenate_authors_and_messages(struct chat_server* server)
 int send_message_to_clients(struct chat_server* server, struct epoll_event* event)
 {
 	// printf("tryna send messages to all clients and all for this client: %d\n", event->data.fd);
+	if(!server->input_buf_complete_messages_n)
+	{
+		return 0;
+	}
 	concatenate_authors_and_messages(server);
 	for(int i = 0; i < server->n_peers; i++)
 	{
@@ -415,6 +419,7 @@ int send_message_to_clients(struct chat_server* server, struct epoll_event* even
 	free(server->input_buf);
 	server->input_buf_capacity = 0;
 	server->input_buf_size = 0;
+	server->input_buf = NULL;
 	return 0;
 }
 
@@ -428,8 +433,11 @@ int read_message_from_client(struct chat_server* server, struct epoll_event* eve
 	struct chat_peer* client = find_peer(server, client_fd);
 	int rc = 0;
 	int total_received = 0;
-	server->input_buf = calloc(BUF_SIZE, sizeof(char));
-	server->input_buf_capacity = BUF_SIZE;
+	if(server->input_buf_capacity == 0)
+	{
+		server->input_buf = calloc(BUF_SIZE, sizeof(char));
+		server->input_buf_capacity = BUF_SIZE;
+	}
 	do{
 		server->input_buf_size += rc;
 		total_received += rc;
@@ -509,22 +517,18 @@ chat_server_update(struct chat_server *server, double timeout)
 	{
 		max_events = 1000;
 	}
-	struct epoll_event *events;
-	events = calloc(max_events, sizeof(struct epoll_event));
-	int rc = epoll_wait(server->epoll_fd, events, max_events, timeout * 1000);
+	struct epoll_event events[max_events];
+	int rc = epoll_wait(server->epoll_fd, &events[0], max_events, timeout * 1000);
 	if(rc == 0)
 	{
-		free(events);
 		return CHAT_ERR_TIMEOUT;
 	}
 	else if(rc < 0)
 	{
 		perror("Error getting events at server update");
-		free(events);
 		return CHAT_ERR_SYS;
 	}
-	// printf("I allegedly received %d events\n", rc);
-	for(int i = 0; i < max_events; i++)
+	for(int i = 0; i < rc; i++)
 	{
 		if(events[i].data.fd == server->socket)
 		{
@@ -550,7 +554,6 @@ chat_server_update(struct chat_server *server, double timeout)
 			send_message_to_client(server, events[i].data.fd);
 		}
 	}
-	free(events);
 	return 0;
 }
 
