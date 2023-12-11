@@ -297,9 +297,13 @@ int send_message_to_client(struct chat_server* server, int client_socket, struct
 			if(errno == EWOULDBLOCK || errno == EAGAIN)
 			{
 				// Calculate the number of characters to keep
-        		size_t remaining = client->output_buf_size - pointer + 1; // +1 to include the null terminator
-		        memmove(client->output_buf, client->output_buf + pointer, remaining);
-				client->output_buf[client->output_buf_size - pointer] = '\0';
+				if(pointer)
+				{
+					size_t remaining = client->output_buf_size - pointer;
+					memmove(client->output_buf, client->output_buf + pointer, remaining);
+					client->output_buf[client->output_buf_size - pointer] = '\0';
+					client->output_buf_size -= pointer;
+				}
 				return pointer;
 			}
 			break;
@@ -518,7 +522,7 @@ chat_server_update(struct chat_server *server, double timeout)
 	}
 	for(int i = 0; i < rc; i++)
 	{
-		if(events[i].data.fd == server->socket)
+		if(events[i].events & EPOLLIN && events[i].data.fd == server->socket)
 		{
 			accept_new_peer(server);
 			continue;

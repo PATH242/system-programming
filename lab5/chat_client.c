@@ -239,7 +239,7 @@ int chat_client_send_buf(struct chat_client* client)
 				if(errno == EWOULDBLOCK || errno == EAGAIN)
 				{
 					// Calculate the number of characters to keep
-					int remaining = sz + 1; // +1 to include the null terminator
+					int remaining = sz;
 					memmove(client->messages_to_be_sent[0]->data,
 							client->messages_to_be_sent[0]->data + msg_sent, remaining);
 					client->messages_to_be_sent[0]->data[sz] = '\0';
@@ -304,6 +304,7 @@ int chat_client_receive_buf(struct chat_client* client)
 	else
 	{
 		int start = 0;
+		int author_end = 0;
 		int is_first = 1;
 		for(int i = 0; i < client->input_buf_size; i++)
 		{
@@ -313,27 +314,31 @@ int chat_client_receive_buf(struct chat_client* client)
 				struct chat_message* new_message;
 				if(is_first)
 				{
-					new_message = malloc(sizeof(struct chat_message));
-					new_message->data = NULL;
-					client->received_messages = realloc(client->received_messages, (client->n_received_messages + 1) * sizeof(struct chat_message*));
-					client->received_messages[client->n_received_messages] = new_message;
-					client->n_received_messages += 1;
-				}
-				else
-				{
-					new_message = client->received_messages[client->n_received_messages-1];
-				}
-				char* message_content = calloc(i - start + 1, sizeof(char));
-				message_content = memcpy(message_content, client->input_buf+start, (i - start +1));
-				// add terminating character instead of '\n'
-				message_content[i-start] = '\0';
-				if(is_first)
-				{
-					new_message->author = message_content;
+					author_end = i;
 					is_first = 0;
+					continue;
 				}
-				else
+				new_message = malloc(sizeof(struct chat_message));
+				client->received_messages = realloc(client->received_messages, (client->n_received_messages + 1) * sizeof(struct chat_message*));
+				client->received_messages[client->n_received_messages] = new_message;
+				client->n_received_messages += 1;
+				new_message = client->received_messages[client->n_received_messages-1];
+				
+				if(author_end)
 				{
+					char* message_content = calloc(author_end - start + 1, sizeof(char));
+					message_content = memcpy(message_content, client->input_buf+start, (author_end - start +1));
+					// add terminating character instead of '\n'
+					message_content[author_end-start] = '\0';
+					new_message->author = message_content;
+					start = author_end + 1;
+				}
+				if(start) // dummy cond
+				{
+					char* message_content = calloc(i - start + 1, sizeof(char));
+					message_content = memcpy(message_content, client->input_buf+start, (i - start +1));
+					// add terminating character instead of '\n'
+					message_content[i-start] = '\0';
 					new_message->data = message_content;
 					is_first = 1;
 				}
