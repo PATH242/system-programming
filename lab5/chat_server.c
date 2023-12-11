@@ -172,7 +172,7 @@ int accept_new_peer(struct chat_server* server)
 		server->n_peers += 1;
 
 		struct epoll_event event;
-		event.events = (EPOLLIN | EPOLLET);
+		event.events = EPOLLIN;
 		event.data.ptr = new_peer;
 		// Make the new connection non blocking
 		int old_flags = fcntl(new_client_fd, F_GETFL);
@@ -244,8 +244,8 @@ chat_server_listen(struct chat_server *server, uint16_t port)
 		close(server->socket);
 		return CHAT_ERR_SYS;
 	}
-	server->epoll_trigger.events = (EPOLLIN | EPOLLET);
-	server->epoll_trigger.data.fd = server->socket;
+	server->epoll_trigger.events = EPOLLIN;
+	server->epoll_trigger.data.ptr = NULL;
 	if(epoll_ctl(epoll_fd, EPOLL_CTL_ADD, server->socket, &server->epoll_trigger) < 0)
     {
 		perror("Error adding server socket to epoll");
@@ -318,7 +318,7 @@ int send_message_to_client(struct chat_server* server, int client_socket, struct
 			pointer += rc;
 		}
 	}
-	server->epoll_trigger.events = (EPOLLET | EPOLLIN);
+	server->epoll_trigger.events = EPOLLIN;
 	server->epoll_trigger.data.ptr = client;
 	rc = epoll_ctl(server->epoll_fd, EPOLL_CTL_MOD, client_socket, &server->epoll_trigger);
 	client->output_buf_size = 0;
@@ -400,7 +400,7 @@ int send_message_to_clients(struct chat_server* server, struct epoll_event* even
 		client->output_buf_size = target_size;
 		client->output_buf_capacity = target_size;
 		// signal to all sockets that they should write
-		server->epoll_trigger.events = (EPOLLOUT | EPOLLIN | EPOLLET);
+		server->epoll_trigger.events = (EPOLLOUT | EPOLLIN);
 		server->epoll_trigger.data.ptr = server->peers[i];
 		int rc = epoll_ctl(server->epoll_fd, EPOLL_CTL_MOD, client_socket, &server->epoll_trigger);
 		if(rc < 0)
@@ -522,7 +522,7 @@ chat_server_update(struct chat_server *server, double timeout)
 	}
 	for(int i = 0; i < rc; i++)
 	{
-		if(events[i].events & EPOLLIN && events[i].data.fd == server->socket)
+		if(events[i].data.ptr == NULL)
 		{
 			accept_new_peer(server);
 			continue;
