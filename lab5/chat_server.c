@@ -18,6 +18,7 @@
 #include <fcntl.h>
 #define _GNU_SOURCE
 #define BUF_SIZE 1024
+#define BUF_LIMIT 10240
 
 struct chat_peer {
 	/** Client's socket. To read/write messages. */
@@ -27,6 +28,9 @@ struct chat_peer {
 	char* output_buf;
 	int output_buf_size;
 	int output_buf_capacity;
+	char* partial_buf;
+	int partial_buf_capacity;
+	int partial_buf_size;
 };
 
 struct chat_server {
@@ -77,6 +81,7 @@ chat_server_delete(struct chat_server *server)
 	}
 	for(int i = 0; i < server->n_peers; i++)
 	{
+		close(server->peers[i]->socket);
 		if(server->peers[i]->name != NULL)
 		{
 			free(server->peers[i]->name);
@@ -125,6 +130,10 @@ void delete_peer(struct chat_server* server, int fd)
 			{
 				free(server->peers[i]->name);
 			}
+			if(server->peers[i]->partial_buf != NULL)
+			{
+				free(server->peers[i]->partial_buf);
+			}
 			free(server->peers[i]);
 			shift = 1;
 		}
@@ -166,7 +175,9 @@ int accept_new_peer(struct chat_server* server)
 		new_peer->output_buf_size = 0;
 		new_peer->output_buf_capacity = 0;
 		new_peer->output_buf = NULL;
-
+		new_peer->partial_buf = NULL;
+		new_peer->partial_buf_size = 0;
+		new_peer->partial_buf_capacity = 0;
 		server->peers = realloc(server->peers, (server->n_peers + 1) * sizeof(struct chat_peer*));
 		server->peers[server->n_peers] = new_peer;
 		server->n_peers += 1;
@@ -287,11 +298,25 @@ int send_message_to_client(struct chat_server* server, int client_socket, struct
 	}
 	int pointer = 0;
 	int rc = 0;
+	int send_counter = 0;
 	while(pointer < client->output_buf_size)
 	{
-		rc = 
-			send(client_socket, client->output_buf + pointer,
-					client->output_buf_size - pointer, 0);
+		// limit sending size
+		size_t send_size = client->output_buf_size - pointer;
+		if(send_size > BUF_LIMIT)
+		{
+			send_size = BUF_LIMIT;
+		}
+		if(send_counter++ == 10)
+		{
+			rc = -1;
+			errno = EWOULDBLOCK;
+		}
+		else{
+			rc = 
+				send(client_socket, client->output_buf + pointer,
+						send_size, 0);
+		}
 		if(rc < 0)
 		{
 			if(errno == EWOULDBLOCK || errno == EAGAIN)
@@ -423,11 +448,21 @@ int read_message_from_client(struct chat_server* server, struct epoll_event* eve
 	int client_fd = client->socket;
 	int rc = 0;
 	int total_received = 0;
+	if(client->partial_buf != NULL)
+	{
+		server->input_buf = client->partial_buf;
+		server->input_buf_size = client->partial_buf_size;
+		server->input_buf_capacity = client->partial_buf_capacity;
+		client->partial_buf = NULL;
+		client->partial_buf_capacity = 0;
+		client->partial_buf_size = 0;
+	}
 	if(server->input_buf_capacity == 0)
 	{
 		server->input_buf = calloc(BUF_SIZE, sizeof(char));
 		server->input_buf_capacity = BUF_SIZE;
 	}
+	int recv_count = 0;
 	do{
 		server->input_buf_size += rc;
 		total_received += rc;
@@ -439,8 +474,20 @@ int read_message_from_client(struct chat_server* server, struct epoll_event* eve
 			free(server->input_buf);
 			server->input_buf = new_buf;
 		}
-		rc = recv(client_fd, server->input_buf + server->input_buf_size,
-						server->input_buf_capacity - server->input_buf_size, MSG_DONTWAIT);
+		int recv_size = server->input_buf_capacity - server->input_buf_size;
+		if(recv_size > BUF_LIMIT)
+		{
+			recv_size = BUF_LIMIT;
+		}
+		if(recv_count++ == 10)
+		{
+			break;
+		}
+		else
+		{
+			rc = recv(client_fd, server->input_buf + server->input_buf_size,
+						recv_size, MSG_DONTWAIT);
+		}
 	}while(rc > 0);
 
 	if(total_received)
@@ -484,24 +531,22 @@ int read_message_from_client(struct chat_server* server, struct epoll_event* eve
 				start = i + 1;
 			}
 		}
-		if(start == server->input_buf_size)
+		if(start < server->input_buf_size)
 		{
-			free(server->input_buf);
-			server->input_buf = NULL;
-			server->input_buf_capacity = 0;
-			server->input_buf_size = 0;
+			char* new_buf = calloc(server->input_buf_capacity - start+1, sizeof(char));
+			memcpy(new_buf, server->input_buf+start, server->input_buf_size -start);
+			new_buf[server->input_buf_size-start] = '\0';
+			server->input_buf_capacity -= (start);
+			server->input_buf_size -= (start);
+			client->partial_buf = new_buf;
+			client->partial_buf_capacity = server->input_buf_capacity;
+			client->partial_buf_size = server->input_buf_size;
 		}
-		else
-		{
-			if(start)
-			{
-				int remaining = server->input_buf_size - start;
-				memmove(server->input_buf, server->input_buf + start, remaining);
-				server->input_buf[remaining] = '\0';
-				server->input_buf_size -= start;
-			}
-		}
-	}	
+		free(server->input_buf);
+		server->input_buf = NULL;
+		server->input_buf_capacity = 0;
+		server->input_buf_size = 0;
+	}
 	return total_received;
 }
 
