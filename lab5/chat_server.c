@@ -43,10 +43,7 @@ struct chat_server {
 	int n_received_messages;
 	struct chat_message** received_messages;
 	/** Input buffer. */
-	char* input_buf;
 	int input_buf_complete_messages_n;
-	int input_buf_size;
-	int input_buf_capacity;
 
 	struct epoll_event epoll_trigger;
 	int epoll_fd;
@@ -63,9 +60,6 @@ chat_server_new(void)
 	server->socket = -1;
 	server->n_peers = 0;
 	server->peers = NULL;
-	server->input_buf = NULL;
-	server->input_buf_size = 0;
-	server->input_buf_capacity = 0;
 	server->n_received_messages = 0;
 	server->received_messages = NULL;
 	server->input_buf_complete_messages_n = 0;
@@ -95,10 +89,6 @@ chat_server_delete(struct chat_server *server)
 	if(server->n_peers)
 	{
 		free(server->peers);
-	}
-	if(server->input_buf_capacity)
-	{
-		free(server->input_buf);
 	}
 	for(int i = 0; i < server->n_received_messages; i++)
 	{
@@ -448,33 +438,36 @@ int read_message_from_client(struct chat_server* server, struct epoll_event* eve
 	int client_fd = client->socket;
 	int rc = 0;
 	int total_received = 0;
+	char* input_buf = NULL;
+	int input_buf_capacity = 0;
+	int input_buf_size = 0;
 	if(client->partial_buf != NULL)
 	{
-		server->input_buf = client->partial_buf;
-		server->input_buf_size = client->partial_buf_size;
-		server->input_buf_capacity = client->partial_buf_capacity;
+		input_buf = client->partial_buf;
+		input_buf_size = client->partial_buf_size;
+		input_buf_capacity = client->partial_buf_capacity;
 		client->partial_buf = NULL;
 		client->partial_buf_capacity = 0;
 		client->partial_buf_size = 0;
 	}
-	if(server->input_buf_capacity == 0)
+	if(input_buf_capacity == 0)
 	{
-		server->input_buf = calloc(BUF_SIZE, sizeof(char));
-		server->input_buf_capacity = BUF_SIZE;
+		input_buf = calloc(BUF_SIZE, sizeof(char));
+		input_buf_capacity = BUF_SIZE;
 	}
 	int recv_count = 0;
 	do{
-		server->input_buf_size += rc;
+		input_buf_size += rc;
 		total_received += rc;
-		if(server->input_buf_size == server->input_buf_capacity)
+		if(input_buf_size == input_buf_capacity)
 		{
-			server->input_buf_capacity *= 2;
-			char* new_buf = calloc(server->input_buf_capacity, sizeof(char));
-			memcpy(new_buf, server->input_buf, server->input_buf_size);
-			free(server->input_buf);
-			server->input_buf = new_buf;
+			input_buf_capacity *= 2;
+			char* new_buf = calloc(input_buf_capacity, sizeof(char));
+			memcpy(new_buf, input_buf, input_buf_size);
+			free(input_buf);
+			input_buf = new_buf;
 		}
-		int recv_size = server->input_buf_capacity - server->input_buf_size;
+		int recv_size = input_buf_capacity - input_buf_size;
 		if(recv_size > BUF_LIMIT)
 		{
 			recv_size = BUF_LIMIT;
@@ -485,7 +478,7 @@ int read_message_from_client(struct chat_server* server, struct epoll_event* eve
 		}
 		else
 		{
-			rc = recv(client_fd, server->input_buf + server->input_buf_size,
+			rc = recv(client_fd, input_buf + input_buf_size,
 						recv_size, MSG_DONTWAIT);
 		}
 	}while(rc > 0);
@@ -493,32 +486,32 @@ int read_message_from_client(struct chat_server* server, struct epoll_event* eve
 	if(total_received)
 	{
 		int start = 0;
-		for(int i = 0; i < server->input_buf_size; i++)
+		for(int i = 0; i < input_buf_size; i++)
 		{
-			if(server->input_buf[i] == '\n')
+			if(input_buf[i] == '\n')
 			{
 				// Only first time client sends a message, get client name.
 				if(client->name == NULL)
 				{
 					client->name = calloc(i - start + 1, sizeof(char));
-					client->name = memcpy(client->name, server->input_buf, i + 1);
+					client->name = memcpy(client->name, input_buf, i + 1);
 					// add terminating character instead of '\n'
 					client->name[i] = '\0';
 					// remove name from buf to not be added to other clients.
-					char* new_buf = calloc(server->input_buf_capacity - i, sizeof(char));
-					memcpy(new_buf, server->input_buf+i+1, server->input_buf_size -i-1);
-					new_buf[server->input_buf_size-i-1] = '\0';
-					server->input_buf_capacity -= i;
-					server->input_buf_size -= (i+1);
+					char* new_buf = calloc(input_buf_capacity - i, sizeof(char));
+					memcpy(new_buf, input_buf+i+1, input_buf_size -i-1);
+					new_buf[input_buf_size-i-1] = '\0';
+					input_buf_capacity -= i;
+					input_buf_size -= (i+1);
 					start = 0;
 					i = -1;
-					free(server->input_buf);
-					server->input_buf = new_buf;
+					free(input_buf);
+					input_buf = new_buf;
 					continue;
 				}
 				struct chat_message* new_message = calloc(1, sizeof(struct chat_message));
 				char* message_content = calloc(i - start + 1, sizeof(char));
-				message_content = memcpy(message_content, server->input_buf+start, (i - start +1));
+				message_content = memcpy(message_content, input_buf+start, (i - start +1));
 				// add terminating character instead of '\n'
 				message_content[i-start] = '\0';
 				server->input_buf_complete_messages_n ++;
@@ -531,22 +524,19 @@ int read_message_from_client(struct chat_server* server, struct epoll_event* eve
 				start = i + 1;
 			}
 		}
-		if(start < server->input_buf_size)
+		if(start < input_buf_size)
 		{
-			char* new_buf = calloc(server->input_buf_capacity - start+1, sizeof(char));
-			memcpy(new_buf, server->input_buf+start, server->input_buf_size -start);
-			new_buf[server->input_buf_size-start] = '\0';
-			server->input_buf_capacity -= (start);
-			server->input_buf_size -= (start);
+			char* new_buf = calloc(input_buf_capacity - start+1, sizeof(char));
+			memcpy(new_buf, input_buf+start, input_buf_size -start);
+			new_buf[input_buf_size-start] = '\0';
+			input_buf_capacity -= (start);
+			input_buf_size -= (start);
 			client->partial_buf = new_buf;
-			client->partial_buf_capacity = server->input_buf_capacity;
-			client->partial_buf_size = server->input_buf_size;
+			client->partial_buf_capacity = input_buf_capacity;
+			client->partial_buf_size = input_buf_size;
 		}
-		free(server->input_buf);
-		server->input_buf = NULL;
-		server->input_buf_capacity = 0;
-		server->input_buf_size = 0;
 	}
+	free(input_buf);
 	return total_received;
 }
 
