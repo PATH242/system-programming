@@ -42,8 +42,6 @@ struct chat_server {
 	/** Array of received messages. */
 	int n_received_messages;
 	struct chat_message** received_messages;
-	/** Input buffer. */
-	int input_buf_complete_messages_n;
 
 	struct epoll_event epoll_trigger;
 	int epoll_fd;
@@ -62,7 +60,6 @@ chat_server_new(void)
 	server->peers = NULL;
 	server->n_received_messages = 0;
 	server->received_messages = NULL;
-	server->input_buf_complete_messages_n = 0;
 	return server;
 }
 
@@ -347,54 +344,27 @@ int send_message_to_client(struct chat_server* server, int client_socket, struct
 	return 0;
 }
 
-char* concatenate_authors_and_messages(struct chat_server* server)
+char* concatenate_author_and_message(struct chat_message* msg)
 {
-	if (!server->input_buf_complete_messages_n)
-	{
-		return NULL;
-	}
-	/*Not the most effecient way but I wanted to keep the
-	bonus functionality somewhat separate from main functioniality.*/
-	char* result_buf = calloc(BUF_SIZE, sizeof(char));
+	int author_len = strlen(msg->author);
+	int data_len = strlen(msg->data);
+	int result_capacity = author_len + data_len + 2;
+	char* result_buf = calloc(result_capacity+1, sizeof(char));
 	int result_buf_size = 0;
-	int result_capacity = BUF_SIZE;
-	int offset = server->n_received_messages
-			- server->input_buf_complete_messages_n;
-	for (int i = 0; i < server->input_buf_complete_messages_n; i++)
-	{
-		// Concatenate author and message
-		int author_len = strlen(server->received_messages[i + offset]->author);
-		int data_len = strlen(server->received_messages[i + offset]->data);
-		if (result_buf_size + author_len + data_len + 2 > result_capacity)
-		{
-			result_capacity = result_buf_size + author_len + data_len + 2;
-			char* new_buf = calloc(result_capacity+1, sizeof(char));
-			memcpy(new_buf, result_buf, result_buf_size);
-			free(result_buf);
-			result_buf = new_buf;
-		}
+	memcpy(result_buf + result_buf_size, msg->author, author_len);
+	result_buf_size += author_len;
+	result_buf[result_buf_size++] = '\n';
+	memcpy(result_buf + result_buf_size, msg->data, data_len);
+	result_buf_size += data_len;
+	result_buf[result_buf_size++] = '\n';
+	result_buf[result_buf_size] = '\0';
 
-		memcpy(result_buf + result_buf_size, server->received_messages[i + offset]->author, author_len);
-		result_buf_size += author_len;
-		result_buf[result_buf_size++] = '\n';
-
-		memcpy(result_buf + result_buf_size, server->received_messages[i + offset]->data, data_len);
-		result_buf_size += data_len;
-		result_buf[result_buf_size++] = '\n';
-		result_buf[result_buf_size] = '\0';
-	}
-
-	server->input_buf_complete_messages_n = 0; 
 	return result_buf;
 }
 
-int send_message_to_clients(struct chat_server* server, struct epoll_event* event)
+int add_message_to_clients(struct chat_server* server, struct epoll_event* event, struct chat_message* msg)
 {
-	if(!server->input_buf_complete_messages_n)
-	{
-		return 0;
-	}
-	char* result_buf = concatenate_authors_and_messages(server);
+	char* result_buf = concatenate_author_and_message(msg);
 	int sz = strlen(result_buf);
 	for(int i = 0; i < server->n_peers; i++)
 	{
@@ -432,7 +402,7 @@ int send_message_to_clients(struct chat_server* server, struct epoll_event* even
 * 1) Read message from client with as many retries as it takes
 * 2) store message somewhere for pop_message to access it
 */
-int read_message_from_client(struct chat_server* server, struct epoll_event* event)
+int read_messages_from_client(struct chat_server* server, struct epoll_event* event)
 {
 	struct chat_peer* client = event->data.ptr;
 	int client_fd = client->socket;
@@ -514,9 +484,9 @@ int read_message_from_client(struct chat_server* server, struct epoll_event* eve
 				message_content = memcpy(message_content, input_buf+start, (i - start +1));
 				// add terminating character instead of '\n'
 				message_content[i-start] = '\0';
-				server->input_buf_complete_messages_n ++;
 				new_message->data = message_content;
 				new_message->author = strdup(client->name);
+				add_message_to_clients(server, event, new_message);
 				server->received_messages = realloc(
 								server->received_messages, (server->n_received_messages + 1) * sizeof(struct chat_message*));
 				server->received_messages[server->n_received_messages] = new_message;
@@ -582,7 +552,7 @@ chat_server_update(struct chat_server *server, double timeout)
 		int client_socket = client->socket;
 		if((events[i].events & EPOLLIN))
 		{
-			if(read_message_from_client(server, &events[i]) == 0)
+			if(read_messages_from_client(server, &events[i]) == 0)
 			{
 				rc = epoll_ctl(server->epoll_fd, EPOLL_CTL_DEL, client_socket, NULL);
 				if(rc < 0)
@@ -592,7 +562,6 @@ chat_server_update(struct chat_server *server, double timeout)
 				close(client_socket);
 				delete_peer(server, client_socket);
 			}
-			send_message_to_clients(server, &events[i]);
 		}
 		if((events[i].events & EPOLLOUT))
 		{
