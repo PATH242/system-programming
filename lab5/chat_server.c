@@ -24,10 +24,15 @@ struct chat_peer {
 	/** Client's socket. To read/write messages. */
 	int socket;
 	char* name;
-	/** Output buffer. */
-	char* output_buf;
-	int output_buf_size;
-	int output_buf_capacity;
+	/** Output buffer. 
+	 * One for receiving messages and one for sending.
+	 * We switch between them as necessary.
+	*/
+	char* output_buf[2];
+	int output_buf_size[2];
+	int output_buf_capacity[2];
+	int sending_out_buf_id;
+	int sending_pointer;
 	char* partial_buf;
 	int partial_buf_capacity;
 	int partial_buf_size;
@@ -77,9 +82,12 @@ chat_server_delete(struct chat_server *server)
 		{
 			free(server->peers[i]->name);
 		}
-		if(server->peers[i]->output_buf != NULL)
+		for(int j = 0; j < 2; j++)
 		{
-			free(server->peers[i]->output_buf);
+			if(server->peers[i]->output_buf_capacity[j])
+			{
+				free(server->peers[i]->output_buf[j]);
+			}
 		}
 		free(server->peers[i]);
 	}
@@ -109,9 +117,12 @@ void delete_peer(struct chat_server* server, int fd)
 	{
 		if(server->peers[i]->socket == fd)
 		{
-			if(server->peers[i]->output_buf_capacity)
+			for(int j = 0; j < 2; j++)
 			{
-				free(server->peers[i]->output_buf);
+				if(server->peers[i]->output_buf_capacity[j])
+				{
+					free(server->peers[i]->output_buf[j]);
+				}
 			}
 			if(server->peers[i]->name != NULL)
 			{
@@ -159,9 +170,10 @@ int accept_new_peer(struct chat_server* server)
 		struct chat_peer* new_peer = calloc(1, sizeof(struct chat_peer));
 		new_peer->name = NULL;
 		new_peer->socket = new_client_fd;
-		new_peer->output_buf_size = 0;
-		new_peer->output_buf_capacity = 0;
-		new_peer->output_buf = NULL;
+		new_peer->output_buf_size[0] = new_peer->output_buf_size[1] = 0;
+		new_peer->output_buf_capacity[0] = new_peer->output_buf_capacity[1] = 0;
+		new_peer->output_buf[0] = new_peer->output_buf[1] = NULL;
+		new_peer->sending_pointer = 0;
 		new_peer->partial_buf = NULL;
 		new_peer->partial_buf_size = 0;
 		new_peer->partial_buf_capacity = 0;
@@ -279,17 +291,18 @@ int send_message_to_client(struct chat_server* server, int client_socket, struct
 	{
 		return -1;
 	}
-	if(client->output_buf_size == 0)
+	if(client->output_buf_size[client->sending_out_buf_id] == 0)
 	{
 		return 0;
 	}
-	int pointer = 0;
+	int pointer = client->sending_pointer;
 	int rc = 0;
 	int send_counter = 0;
-	while(pointer < client->output_buf_size)
+	int id = client->sending_out_buf_id;
+	while(pointer < client->output_buf_size[id])
 	{
 		// limit sending size
-		size_t send_size = client->output_buf_size - pointer;
+		size_t send_size = client->output_buf_size[id] - pointer;
 		if(send_size > BUF_LIMIT)
 		{
 			send_size = BUF_LIMIT;
@@ -301,20 +314,22 @@ int send_message_to_client(struct chat_server* server, int client_socket, struct
 		}
 		else{
 			rc = 
-				send(client_socket, client->output_buf + pointer,
+				send(client_socket, client->output_buf[id] + pointer,
 						send_size, 0);
 		}
 		if(rc < 0)
 		{
 			if(errno == EWOULDBLOCK || errno == EAGAIN)
 			{
-				// Calculate the number of characters to keep
-				if(pointer)
+				if(pointer == client->output_buf_size[id])
 				{
-					size_t remaining = client->output_buf_size - pointer;
-					memmove(client->output_buf, client->output_buf + pointer, remaining);
-					client->output_buf[client->output_buf_size - pointer] = '\0';
-					client->output_buf_size -= pointer;
+					client->sending_pointer = 0;
+					client->output_buf_size[id] = 0;
+					client->sending_out_buf_id = (!id);
+				}
+				else
+				{
+					client->sending_pointer = pointer;
 				}
 				return pointer;
 			}
@@ -330,13 +345,17 @@ int send_message_to_client(struct chat_server* server, int client_socket, struct
 			pointer += rc;
 		}
 	}
-	server->epoll_trigger.events = EPOLLIN;
-	server->epoll_trigger.data.ptr = client;
-	rc = epoll_ctl(server->epoll_fd, EPOLL_CTL_MOD, client_socket, &server->epoll_trigger);
-	client->output_buf_size = 0;
-	client->output_buf_capacity = 0;
-	free(client->output_buf);
-	client->output_buf = NULL;
+	// After sending the entire buffer, switch to the other.
+	client->sending_pointer = 0;
+	client->output_buf_size[id] = 0;
+	client->sending_out_buf_id = (!id);
+	// If the second buffer is empty, no more OUT.
+	if(client->output_buf_size[!id] == 0)
+	{
+		server->epoll_trigger.events = EPOLLIN;
+		server->epoll_trigger.data.ptr = client;
+		rc = epoll_ctl(server->epoll_fd, EPOLL_CTL_MOD, client_socket, &server->epoll_trigger);
+	}
 	if(rc < 0)
 	{
 		return CHAT_ERR_SYS;
@@ -375,15 +394,24 @@ int add_message_to_clients(struct chat_server* server, struct epoll_event* event
 			continue;
 		}
 		client = server->peers[i];
-		int target_size = client->output_buf_size + sz;
-		char* new_buf = calloc(target_size+1, sizeof(char));
-		memcpy(new_buf, client->output_buf, client->output_buf_size);
-		memcpy(new_buf + client->output_buf_size, result_buf, sz);
-		new_buf[target_size] = '\0';
-		free(client->output_buf);
-		client->output_buf = new_buf;
-		client->output_buf_size = target_size;
-		client->output_buf_capacity = target_size;
+		int buf_id = (!client->sending_out_buf_id);
+		int target_size = client->output_buf_size[buf_id] + sz;
+		if(client->output_buf_capacity[buf_id] < target_size+1)
+		{
+			char* new_buf = calloc(target_size*2+1, sizeof(char));
+			memcpy(new_buf, client->output_buf[buf_id], client->output_buf_size[buf_id]);
+			memcpy(new_buf + client->output_buf_size[buf_id], result_buf, sz);
+			new_buf[target_size] = '\0';
+			free(client->output_buf[buf_id]);
+			client->output_buf[buf_id] = new_buf;
+			client->output_buf_size[buf_id] = target_size;
+			client->output_buf_capacity[buf_id] = target_size*2;
+		}
+		else
+		{
+			memcpy(client->output_buf[buf_id]+client->output_buf_size[buf_id], result_buf, sz);
+			client->output_buf_size[buf_id] += sz;
+		}
 		// signal to socket that it should write
 		server->epoll_trigger.events = (EPOLLOUT | EPOLLIN);
 		server->epoll_trigger.data.ptr = server->peers[i];
@@ -392,6 +420,11 @@ int add_message_to_clients(struct chat_server* server, struct epoll_event* event
 		{
 			free(result_buf);
 			return CHAT_ERR_SYS;
+		}
+		// If the other buffer is empty, make this buffer the sending buffer.
+		if(client->output_buf_size[client->sending_out_buf_id] == 0)
+		{
+			client->sending_out_buf_id = !client->sending_out_buf_id;
 		}
 	}
 	free(result_buf);
@@ -611,7 +644,7 @@ chat_server_get_events(const struct chat_server *server)
 	}
 	for(int i = 0; i < server->n_peers; i++)
 	{
-		if(server->peers[i]->output_buf_size)
+		if(server->peers[i]->output_buf_size[0] || server->peers[i]->output_buf_size[1])
 		{
 			return (CHAT_EVENT_INPUT | CHAT_EVENT_OUTPUT);
 		}
